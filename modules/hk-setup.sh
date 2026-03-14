@@ -1013,10 +1013,8 @@ hk_run_backup() {
     )"
   fi
   if [[ -z "${node_id}" ]]; then
-    _hk_warn "未自动识别到 V2bX Node ID，请手动输入用于备份"
-    if _hk_read_node_id "${V2BX_NODE_ID:-}"; then
-      node_id="${V2BX_NODE_ID}"
-    fi
+    _hk_warn "未自动识别到 V2bX Node ID，备份中将写入占位值，请手动补全"
+    node_id="REPLACE_WITH_NODE_ID"
   fi
 
   wan_if="$(ip -o -4 route show to default 2>/dev/null | awk '{print $5}' | head -1)"
