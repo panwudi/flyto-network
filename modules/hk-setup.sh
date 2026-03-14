@@ -770,23 +770,30 @@ hk_run_backup() {
   _hk_warn "不要通过聊天/邮件/截图传输"
   echo
   echo -e "  ${Y}请完整复制上方备份信息并确认保存后再继续。${N}"
+  echo -e "  ${D}输入 y: 已保存并继续  |  n: 继续停留在此页面  |  q: 退出脚本${N}"
   while true; do
-    read -r -p "  已复制并安全保存以上信息？[y/N]: " ans </dev/tty || {
+    read -r -p "  请选择 [y/n/q]: " ans </dev/tty || {
       _hk_err "未检测到交互输入，已中止备份流程"
       return 1
     }
     case "${ans}" in
-      [Yy]|[Yy][Ee][Ss]) break ;;
+      [Yy]|[Yy][Ee][Ss])
+        echo
+        _hk_ok "备份确认完成，返回上级菜单"
+        return 0
+        ;;
       [Nn]|[Nn][Oo]|"")
-        _hk_warn "请先完成复制与保存，再继续"
+        _hk_info "请继续停留在当前页面复制备份信息，确认后输入 y"
+        ;;
+      [Qq]|[Qq][Uu][Ii][Tt]|[Ee][Xx][Ii][Tt])
+        _hk_warn "按你的选择退出脚本"
+        exit 0
         ;;
       *)
-        _hk_warn "请输入 y 或 n"
+        _hk_warn "请输入 y / n / q"
         ;;
     esac
   done
-  echo
-  _hk_ok "备份确认完成"
 
   # 不恢复 wg0（即将重装系统）
 }

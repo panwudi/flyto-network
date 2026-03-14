@@ -139,8 +139,19 @@ load_secrets() {
 
   echo
   echo -e "  ${Y}首次运行需要解密配置文件${N}"
-  local pass
-  prompt_read_secret pass "  请输入解密口令: "
+  echo -e "  ${C}┌──────────────────────────────────────────────┐${N}"
+  echo -e "  ${C}│  请输入解密密钥（输入过程不显示字符）      │${N}"
+  echo -e "  ${C}└──────────────────────────────────────────────┘${N}"
+  local pass=""
+  while true; do
+    prompt_read_secret pass "  密钥输入 > "
+    echo
+    if [[ -z "${pass}" ]]; then
+      warn "密钥不能为空，请重新输入"
+      continue
+    fi
+    break
+  done
   echo
 
   mkdir -p /etc/flyto
