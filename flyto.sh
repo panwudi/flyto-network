@@ -19,20 +19,22 @@ if exec 9</dev/tty 2>/dev/null; then
 fi
 
 # ── 颜色 ────────────────────────────────────────────────────
-BG_GREEN='\033[48;5;22m'   # 墨绿底色
-W='\033[1;37m'              # 白字
-O='\033[38;5;208m'          # 橙色
-G='\033[1;32m'              # 绿色
-R='\033[1;31m'              # 红色
-Y='\033[1;33m'              # 黄色
-C='\033[1;36m'              # 青色
-D='\033[2;37m'              # 暗白
-N='\033[0m'                 # 重置
+BG_GREEN='\033[48;5;22m'
+W='\033[1;37m'
+O='\033[38;5;208m'
+G='\033[1;32m'
+R='\033[1;31m'
+Y='\033[1;33m'
+C='\033[1;36m'
+D='\033[2;37m'
+N='\033[0m'
 
 info()    { echo -e "${C}[INFO]${N} $*"; }
 success() { echo -e "${G}[OK]${N} $*"; }
 warn()    { echo -e "${Y}[WARN]${N} $*"; }
 error()   { echo -e "${R}[ERROR]${N} $*" >&2; }
+
+FLYTO_INTERACTIVE=0
 
 prompt_read() {
   local __var_name="$1"
@@ -54,22 +56,52 @@ prompt_read_secret() {
   fi
 }
 
+pause_screen() {
+  local __prompt="${1:-  按回车继续...}"
+  local __dummy=""
+  [[ "${FLYTO_INTERACTIVE}" == "1" ]] || return 0
+  echo
+  if ! IFS= read -r -u "${INPUT_FD}" -p "${__prompt}" __dummy; then
+    echo
+    warn "未检测到交互输入，跳过暂停"
+  fi
+  echo
+}
+
+run_action() {
+  local __rc=0
+  set +e
+  "$@"
+  __rc=$?
+  set -e
+  return "${__rc}"
+}
+
+run_and_warn() {
+  local __desc="$1"
+  shift
+  local __rc=0
+  run_action "$@" || __rc=$?
+  if [[ ${__rc} -ne 0 ]]; then
+    warn "${__desc}返回异常（退出码 ${__rc}）"
+  fi
+  return 0
+}
+
 # ── Banner ──────────────────────────────────────────────────
 show_banner() {
   clear 2>/dev/null || true
-  local PAD="${BG_GREEN}  ${N}"
-  local BG="${BG_GREEN}"
   echo
-  echo -e "${BG}$(printf '%0.s ' {1..64})${N}"
-  echo -e "${PAD}${W}███████╗██╗  ██╗   ██╗████████╗  ${O}╔══════════╗${W}  ${BG}   ${N}"
-  echo -e "${PAD}${W}██╔════╝██║  ╚██╗ ██╔╝╚══██╔══╝  ${O}╠══════════╬╗${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}█████╗  ██║   ╚████╔╝    ██║     ${O}║          ║ ${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}██╔══╝  ██║    ╚██╔╝     ██║     ${O}║          ║ ${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}██║     ███████╗██║      ██║     ${O}╚══════════╝ ${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}╚═╝     ╚══════╝╚═╝      ╚═╝                     ${W} ${BG}   ${N}"
-  echo -e "${BG}$(printf '%0.s ' {1..64})${N}"
+  echo -e "${W}  ███████╗██╗  ██╗   ██╗████████╗ ██████╗ ${N}"
+  echo -e "${W}  ██╔════╝██║  ╚██╗ ██╔╝╚══██╔══╝██╔═══██╗${N}"
+  echo -e "${W}  █████╗  ██║   ╚████╔╝    ██║   ██║   ██║${N}"
+  echo -e "${W}  ██╔══╝  ██║    ╚██╔╝     ██║   ██║   ██║${N}"
+  echo -e "${W}  ██║     ███████╗██║      ██║   ╚██████╔╝${O}█╗${N}"
+  echo -e "${W}  ╚═╝     ╚══════╝╚═╝      ╚═╝    ╚═════╝ ${O}╚╝${N}"
   echo
-  echo -e "  ${O}▌${N} ${W}FLYTOex Network${N}  ${D}·${N}  v${FLYTO_VERSION}  ${D}·${N}  ${C}www.flytoex.com${N}"
+  echo -e "  ${O}▌${N} ${W}FLYTOex Network${N}  ${C}·${N}  运维控制台"
+  echo -e "  ${O}▌${N} ${C}v${FLYTO_VERSION}${N}  ${C}·${N}  github.com/panwudi/flyto-network"
+  echo -e "  ${O}▌${N} ${C}www.flytoex.com${N}"
   echo
 }
 
@@ -123,6 +155,8 @@ load_secrets() {
     # shellcheck disable=SC1090
     source "${SECRETS_CACHE}"
     success "配置解密成功，已缓存至 ${SECRETS_CACHE}"
+    info "请确认上方提示后继续"
+    pause_screen "  解密成功，按回车继续..."
   else
     rm -f "${tmp}"
     error "口令错误或配置文件损坏"
@@ -158,9 +192,11 @@ load_module() {
 # WARP 子菜单
 # ============================================================
 menu_warp() {
+  FLYTO_INTERACTIVE=1
   while true; do
     echo
-    echo -e "  ${O}── WARP 管理 (Google Gemini 送中) ──${N}"
+    echo -e "  ${W}WARP 管理（Google / Gemini / OpenAI / Claude 相关流量）${N}"
+    echo -e "  ${D}────────────────────────────────────────────────────${N}"
     echo
     echo -e "  ${G}1.${N} 安装 / 升级 WARP"
     echo -e "  ${G}2.${N} 查看 WARP 状态"
@@ -173,38 +209,43 @@ menu_warp() {
     case "${choice}" in
       1)
         load_module warp.sh
-        warp_do_install
+        run_and_warn "WARP 安装/升级" warp_do_install
+        pause_screen "  按回车返回 WARP 菜单..."
         ;;
       2)
         if command -v warp >/dev/null 2>&1; then
-          warp status
+          run_and_warn "WARP 状态查询" warp status
         else
           warn "WARP 尚未安装"
         fi
+        pause_screen "  按回车返回 WARP 菜单..."
         ;;
       3)
         if command -v warp >/dev/null 2>&1; then
-          warp test
+          run_and_warn "WARP 诊断" warp test
         else
           warn "WARP 尚未安装"
         fi
+        pause_screen "  按回车返回 WARP 菜单..."
         ;;
       4)
         if command -v warp >/dev/null 2>&1; then
-          warp restart
+          run_and_warn "WARP 重启" warp restart
         else
           warn "WARP 尚未安装"
         fi
+        pause_screen "  按回车返回 WARP 菜单..."
         ;;
       5)
         if command -v warp >/dev/null 2>&1; then
-          warp uninstall
+          run_and_warn "WARP 卸载" warp uninstall
         else
           warn "WARP 尚未安装"
         fi
+        pause_screen "  按回车返回 WARP 菜单..."
         ;;
       0) return ;;
-      *) error "无效选项" ;;
+      *) error "无效选项"; sleep 1 ;;
     esac
   done
 }
@@ -213,15 +254,18 @@ menu_warp() {
 # 主菜单
 # ============================================================
 show_main_menu() {
+  FLYTO_INTERACTIVE=1
   while true; do
     show_banner
-    echo -e "  ${W}请选择操作:${N}"
+    echo -e "${C}  ╔══════════════════════════════════════════════════════╗${N}"
+    echo -e "${C}  ║                    主菜单 Main Menu                 ║${N}"
+    echo -e "${C}  ╚══════════════════════════════════════════════════════╝${N}"
     echo
-    echo -e "  ${G}1.${N} 香港节点完整部署  ${D}(全新安装 WireGuard + V2bX，可选 WARP)${N}"
-    echo -e "  ${G}2.${N} WARP 管理         ${D}(Google Gemini 送中 — 安装/状态/诊断/卸载)${N}"
-    echo -e "  ${G}3.${N} 备份当前配置      ${D}(保存 WireGuard 密钥供重装系统使用)${N}"
-    echo -e "  ${G}4.${N} 恢复配置          ${D}(重装后从备份恢复)${N}"
-    echo -e "  ${G}5.${N} 清除解密缓存      ${D}(下次运行重新输入口令)${N}"
+    echo -e "  ${G}1.${N} 香港节点完整部署  ${D}(WireGuard + V2bX + 可选 WARP)${N}"
+    echo -e "  ${G}2.${N} WARP 管理         ${D}(安装/状态/诊断/重启/卸载)${N}"
+    echo -e "  ${G}3.${N} 备份当前配置      ${D}(重装前导出 WireGuard 关键参数)${N}"
+    echo -e "  ${G}4.${N} 恢复配置          ${D}(从备份内容恢复部署)${N}"
+    echo -e "  ${G}5.${N} 清除解密缓存      ${D}(下次重新输入口令)${N}"
     echo -e "  ${G}0.${N} 退出"
     echo
     prompt_read choice "  请输入选项 [0-5]: "
@@ -230,24 +274,28 @@ show_main_menu() {
       1)
         load_secrets
         load_module hk-setup.sh
-        hk_run_install
+        run_and_warn "香港节点安装" hk_run_install
+        pause_screen "  按回车返回主菜单..."
         ;;
       2)
         load_module warp.sh
-        menu_warp
+        run_and_warn "WARP 菜单" menu_warp
         ;;
       3)
         load_secrets
         load_module hk-setup.sh
-        hk_run_backup
+        run_and_warn "配置备份" hk_run_backup
+        pause_screen "  按回车返回主菜单..."
         ;;
       4)
         load_secrets
         load_module hk-setup.sh
-        hk_run_restore
+        run_and_warn "配置恢复" hk_run_restore
+        pause_screen "  按回车返回主菜单..."
         ;;
       5)
-        clear_secrets_cache
+        run_and_warn "清除解密缓存" clear_secrets_cache
+        pause_screen "  按回车返回主菜单..."
         ;;
       0)
         echo -e "  ${D}www.flytoex.com${N}"

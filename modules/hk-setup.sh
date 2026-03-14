@@ -35,19 +35,16 @@ HK_STATE_DIR="/etc/hk-setup"
 # ============================================================
 _hk_banner() {
   clear 2>/dev/null || true
-  local BG="${BG_GREEN}"
-  local PAD="${BG}  ${N}"
   echo
-  echo -e "${BG}$(printf '%0.s ' {1..64})${N}"
-  echo -e "${PAD}${W}███████╗██╗  ██╗   ██╗████████╗  ${O}╔══════════╗${W}  ${BG}   ${N}"
-  echo -e "${PAD}${W}██╔════╝██║  ╚██╗ ██╔╝╚══██╔══╝  ${O}╠══════════╬╗${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}█████╗  ██║   ╚████╔╝    ██║     ${O}║          ║ ${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}██╔══╝  ██║    ╚██╔╝     ██║     ${O}║          ║ ${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}██║     ███████╗██║      ██║     ${O}╚══════════╝ ${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}╚═╝     ╚══════╝╚═╝      ╚═╝                      ${BG}   ${N}"
-  echo -e "${BG}$(printf '%0.s ' {1..64})${N}"
+  echo -e "${W}  ███████╗██╗  ██╗   ██╗████████╗ ██████╗ ${N}"
+  echo -e "${W}  ██╔════╝██║  ╚██╗ ██╔╝╚══██╔══╝██╔═══██╗${N}"
+  echo -e "${W}  █████╗  ██║   ╚████╔╝    ██║   ██║   ██║${N}"
+  echo -e "${W}  ██╔══╝  ██║    ╚██╔╝     ██║   ██║   ██║${N}"
+  echo -e "${W}  ██║     ███████╗██║      ██║   ╚██████╔╝${O}█╗${N}"
+  echo -e "${W}  ╚═╝     ╚══════╝╚═╝      ╚═╝    ╚═════╝ ${O}╚╝${N}"
   echo
-  echo -e "  ${O}▌${N} ${W}香港节点部署${N}  ${D}·${N}  ${C}www.flytoex.com${N}"
+  echo -e "  ${O}▌${N} ${W}香港节点部署 HK Transit Setup${N}"
+  echo -e "  ${O}▌${N} ${C}www.flytoex.com${N}"
   echo
 }
 
@@ -771,6 +768,25 @@ hk_run_backup() {
 
   _hk_warn "私钥（HK_PRIV_KEY）极度敏感，请保存在本地加密存储中"
   _hk_warn "不要通过聊天/邮件/截图传输"
+  echo
+  echo -e "  ${Y}请完整复制上方备份信息并确认保存后再继续。${N}"
+  while true; do
+    read -r -p "  已复制并安全保存以上信息？[y/N]: " ans </dev/tty || {
+      _hk_err "未检测到交互输入，已中止备份流程"
+      return 1
+    }
+    case "${ans}" in
+      [Yy]|[Yy][Ee][Ss]) break ;;
+      [Nn]|[Nn][Oo]|"")
+        _hk_warn "请先完成复制与保存，再继续"
+        ;;
+      *)
+        _hk_warn "请输入 y 或 n"
+        ;;
+    esac
+  done
+  echo
+  _hk_ok "备份确认完成"
 
   # 不恢复 wg0（即将重装系统）
 }

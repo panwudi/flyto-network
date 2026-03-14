@@ -62,19 +62,16 @@ STATIC_GOOGLE_IPV4="
 # ── Banner（独立运行时显示）─────────────────────────────────
 _warp_banner() {
   clear 2>/dev/null || true
-  local BG="${BG_GREEN}"
-  local PAD="${BG}  ${N}"
   echo
-  echo -e "${BG}$(printf '%0.s ' {1..64})${N}"
-  echo -e "${PAD}${W}███████╗██╗  ██╗   ██╗████████╗  ${O}╔══════════╗${W}  ${BG}   ${N}"
-  echo -e "${PAD}${W}██╔════╝██║  ╚██╗ ██╔╝╚══██╔══╝  ${O}╠══════════╬╗${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}█████╗  ██║   ╚████╔╝    ██║     ${O}║          ║ ${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}██╔══╝  ██║    ╚██╔╝     ██║     ${O}║          ║ ${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}██║     ███████╗██║      ██║     ${O}╚══════════╝ ${W} ${BG}   ${N}"
-  echo -e "${PAD}${W}╚═╝     ╚══════╝╚═╝      ╚═╝                      ${BG}   ${N}"
-  echo -e "${BG}$(printf '%0.s ' {1..64})${N}"
+  echo -e "${W}  ███████╗██╗  ██╗   ██╗████████╗ ██████╗ ${N}"
+  echo -e "${W}  ██╔════╝██║  ╚██╗ ██╔╝╚══██╔══╝██╔═══██╗${N}"
+  echo -e "${W}  █████╗  ██║   ╚████╔╝    ██║   ██║   ██║${N}"
+  echo -e "${W}  ██╔══╝  ██║    ╚██╔╝     ██║   ██║   ██║${N}"
+  echo -e "${W}  ██║     ███████╗██║      ██║   ╚██████╔╝${O}█╗${N}"
+  echo -e "${W}  ╚═╝     ╚══════╝╚═╝      ╚═╝    ╚═════╝ ${O}╚╝${N}"
   echo
-  echo -e "  ${O}▌${N} ${W}WARP — Google Gemini 送中${N}  ${D}·${N}  v${WARP_VERSION}  ${D}·${N}  ${C}www.flytoex.com${N}"
+  echo -e "  ${O}▌${N} ${W}WARP 管理${N}  ${C}·${N}  Google / Gemini / AI 流量"
+  echo -e "  ${O}▌${N} ${C}v${WARP_VERSION}${N}  ${C}·${N}  ${C}www.flytoex.com${N}"
   echo
 }
 
@@ -872,7 +869,9 @@ warp_do_install() {
   echo
   _info "安装后逐层诊断..."
   sleep 2
-  warp test
+  if ! warp test; then
+    _warn "warp test 存在未通过项，请根据上方提示继续排查"
+  fi
 }
 
 # ── 独立运行支持 ─────────────────────────────────────────────
