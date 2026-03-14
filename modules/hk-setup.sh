@@ -1032,9 +1032,20 @@ hk_run_backup() {
     [[ -n "${priv}" ]] && pub="$(echo "${priv}" | wg pubkey 2>/dev/null || true)"
   fi
   [[ -z "${keepalive}" ]] && keepalive="25"
+  # 优先读取 config.json（当前主流），再回退 config.yml
   node_id="$(
-    sed -nE 's/^[[:space:]]*NodeID:[[:space:]]*([0-9]+).*$/\1/p' /etc/V2bX/config.yml 2>/dev/null | head -1
+    sed -nE 's/.*"(NodeID|nodeId|node_id)"[[:space:]]*:[[:space:]]*"?([0-9]+)"?.*/\2/p' /etc/V2bX/config.json 2>/dev/null | head -1
   )"
+  if [[ -z "${node_id}" ]]; then
+    node_id="$(
+      sed -nE 's/.*"(NodeID|nodeId|node_id)"[[:space:]]*:[[:space:]]*"?([0-9]+)"?.*/\2/p' /usr/local/etc/V2bX/config.json 2>/dev/null | head -1
+    )"
+  fi
+  if [[ -z "${node_id}" ]]; then
+    node_id="$(
+      sed -nE 's/^[[:space:]]*NodeID:[[:space:]]*([0-9]+).*$/\1/p' /etc/V2bX/config.yml 2>/dev/null | head -1
+    )"
+  fi
   if [[ -z "${node_id}" ]]; then
     node_id="$(
       sed -nE 's/^[[:space:]]*NodeID:[[:space:]]*([0-9]+).*$/\1/p' /usr/local/etc/V2bX/config.yml 2>/dev/null | head -1
