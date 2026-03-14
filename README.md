@@ -62,6 +62,7 @@ curl -fsSL https://raw.githubusercontent.com/panwudi/flyto-network/main/install.
 
 默认会把仓库内容下载到 `/opt/flyto-network`，然后自动执行 `flyto.sh`。
 首次运行需输入解密口令以读取面板配置，解密结果缓存于 `/etc/flyto/.secrets`（权限 600），后续无需重复输入。
+若当前会话没有可交互 TTY（例如某些自动化终端），安装器会仅完成下载并提示你手动执行 `bash /opt/flyto-network/flyto.sh`。
 
 如需只下载、不立即启动：
 

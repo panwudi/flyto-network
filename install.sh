@@ -83,7 +83,13 @@ main() {
   fi
 
   info "启动 FLYTOex Network..."
-  exec bash "${INSTALL_DIR}/flyto.sh" "$@"
+  if [[ -r /dev/tty && -w /dev/tty ]]; then
+    # curl | bash 场景下 stdin 是管道，显式绑定 tty 保证交互菜单可用。
+    exec bash "${INSTALL_DIR}/flyto.sh" "$@" </dev/tty >/dev/tty 2>&1
+  fi
+
+  warn "当前会话不可交互（无 /dev/tty），已完成安装但未自动进入菜单。"
+  warn "请手动执行: bash ${INSTALL_DIR}/flyto.sh"
 }
 
 main "$@"
