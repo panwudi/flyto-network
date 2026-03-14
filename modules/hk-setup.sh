@@ -76,7 +76,7 @@ _step_base_system() {
   apt-get update -y >/dev/null 2>&1 || true
 
   local pkgs="wireguard-tools nftables ipset curl ca-certificates dnsutils \
-              net-tools iptables iproute2 cron unzip openssl"
+              net-tools iptables iproute2 cron unzip openssl python3"
   for p in ${pkgs}; do
     apt-get install -y "${p}" >/dev/null 2>&1 || _hk_warn "跳过可选包: ${p}"
   done
@@ -353,6 +353,193 @@ EOF
 # ============================================================
 # 步骤五：V2bX 安装
 # ============================================================
+_write_ai_warp_route_sync_script() {
+  cat > /usr/local/bin/update-ai-warp-route.sh <<'SCRIPT'
+#!/usr/bin/env bash
+# update-ai-warp-route.sh — sync OpenAI/Claude routes to WARP for V2bX sing-box
+set -euo pipefail
+
+ENV_FILE="/etc/warp-google/env"
+V2BX_SING_ORIGIN="/etc/V2bX/sing_origin.json"
+WARP_PROXY_PORT="${WARP_PROXY_PORT:-40000}"
+
+if [[ -f "${ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}" || true
+fi
+WARP_PROXY_PORT="${WARP_PROXY_PORT:-40000}"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "[AI-ROUTE] python3 未安装，无法更新 ${V2BX_SING_ORIGIN}" >&2
+  exit 1
+fi
+
+tmp_rules="$(mktemp)"
+tmp_conf="$(mktemp)"
+cleanup() { rm -f "${tmp_rules}" "${tmp_conf}"; }
+trap cleanup EXIT
+
+python3 > "${tmp_rules}" <<'PYRULE'
+import json
+import urllib.request
+
+SOURCES = [
+    ("meta", "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/openai.yaml"),
+    ("meta", "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/anthropic.yaml"),
+    ("v2fly", "https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/openai"),
+    ("v2fly", "https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/anthropic"),
+]
+
+FALLBACK_SUFFIX = [
+    "openaiapi-site.azureedge.net",
+    "openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net",
+    "openaicom.imgix.net",
+    "openaicomproductionae4b.blob.core.windows.net",
+    "production-openaicom-storage.azureedge.net",
+    "chat.com",
+    "chatgpt.com",
+    "crixet.com",
+    "oaistatic.com",
+    "oaiusercontent.com",
+    "openai.com",
+    "sora.com",
+    "chatgpt.livekit.cloud",
+    "host.livekit.cloud",
+    "turn.livekit.cloud",
+    "openai.com.cdn.cloudflare.net",
+    "o33249.ingest.sentry.io",
+    "browser-intake-datadoghq.com",
+    "servd-anthropic-website.b-cdn.net",
+    "anthropic.com",
+    "clau.de",
+    "claude.ai",
+    "claude.com",
+    "claudemcpclient.com",
+    "claudeusercontent.com",
+]
+
+FALLBACK_REGEX = [
+    r"^chatgpt-async-webps-prod-\S+-\d+\.webpubsub\.azure\.com$",
+]
+
+
+def parse_lines(style: str, text: str):
+    parsed = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if style == "meta":
+            if line == "payload:":
+                continue
+            if line.startswith("- "):
+                line = line[2:].strip()
+        line = line.split(" @", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("full:"):
+            parsed.append(("full", line[5:].strip()))
+        elif line.startswith("regexp:"):
+            parsed.append(("regex", line[7:].strip()))
+        elif line.startswith("+."):
+            parsed.append(("suffix", line[2:].strip()))
+        else:
+            parsed.append(("suffix", line))
+    return parsed
+
+
+suffix = set()
+full = set()
+regex = set()
+
+for style, url in SOURCES:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "flyto-network/2.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            text = resp.read().decode("utf-8", "ignore")
+        for typ, value in parse_lines(style, text):
+            if not value:
+                continue
+            if typ == "suffix":
+                suffix.add(value.lower())
+            elif typ == "full":
+                full.add(value.lower())
+            elif typ == "regex":
+                regex.add(value)
+    except Exception:
+        continue
+
+for item in FALLBACK_SUFFIX:
+    suffix.add(item.lower())
+for item in FALLBACK_REGEX:
+    regex.add(item)
+
+# domain_suffix already covers exact match, keep full list minimal.
+full = {x for x in full if x not in suffix}
+
+result = {
+    "domain_suffix": sorted(suffix),
+    "domain": sorted(full),
+    "domain_regex": sorted(regex),
+}
+print(json.dumps(result, ensure_ascii=True))
+PYRULE
+
+WARP_PROXY_PORT="${WARP_PROXY_PORT}" TMP_RULES="${tmp_rules}" python3 > "${tmp_conf}" <<'PYCONF'
+import json
+import os
+
+port = int(os.environ.get("WARP_PROXY_PORT", "40000"))
+rules = json.load(open(os.environ["TMP_RULES"], "r", encoding="utf-8"))
+
+route_rules = [
+    {"ip_is_private": True, "outbound": "block"},
+]
+
+if rules.get("domain_suffix"):
+    route_rules.append({"domain_suffix": rules["domain_suffix"], "outbound": "warp-ai"})
+if rules.get("domain"):
+    route_rules.append({"domain": rules["domain"], "outbound": "warp-ai"})
+if rules.get("domain_regex"):
+    route_rules.append({"domain_regex": rules["domain_regex"], "outbound": "warp-ai"})
+
+config = {
+    "dns": {
+        "servers": [
+            {"address": "8.8.8.8", "strategy": "ipv4_only"},
+            {"address": "1.1.1.1", "strategy": "ipv4_only"},
+        ]
+    },
+    "outbounds": [
+        {"type": "direct", "tag": "direct"},
+        {"type": "block", "tag": "block"},
+        {
+            "type": "socks",
+            "tag": "warp-ai",
+            "server": "127.0.0.1",
+            "server_port": port,
+        },
+    ],
+    "route": {
+        "rules": route_rules,
+        "final": "direct",
+    },
+}
+
+print(json.dumps(config, indent=2, ensure_ascii=True))
+PYCONF
+
+install -m 0644 "${tmp_conf}" "${V2BX_SING_ORIGIN}"
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl restart V2bX >/dev/null 2>&1 || true
+fi
+
+echo "[AI-ROUTE] 已更新 ${V2BX_SING_ORIGIN} (WARP_PROXY_PORT=${WARP_PROXY_PORT})"
+SCRIPT
+  chmod +x /usr/local/bin/update-ai-warp-route.sh
+}
+
 _step_install_v2bx() {
   _hk_step "步骤 5/6: 安装 V2bX"
 
@@ -399,8 +586,13 @@ Nodes:
       SniffEnabled: false
 EOF
 
-  # sing-box 路由配置
-  cat > /etc/V2bX/sing_origin.json <<'EOF'
+  # sing-box 路由配置（OpenAI / Claude 域名走 WARP）
+  _write_ai_warp_route_sync_script
+  if /usr/local/bin/update-ai-warp-route.sh >/dev/null 2>&1; then
+    _hk_ok "sing-box 路由已生成（OpenAI / Claude -> WARP）"
+  else
+    _hk_warn "AI 路由生成失败，回退为基础 direct 配置"
+    cat > /etc/V2bX/sing_origin.json <<'EOF'
 {
   "dns": {
     "servers": [
@@ -420,6 +612,7 @@ EOF
   }
 }
 EOF
+  fi
 
   systemctl restart V2bX >/dev/null 2>&1 || true
   sleep 2

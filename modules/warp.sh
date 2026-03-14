@@ -294,6 +294,20 @@ WARP_PROXY_PORT=${WARP_PROXY_PORT}
 TPROXY_PORT=${TPROXY_PORT}
 EOF
   _ok "端口配置已写入 ${WARP_ENV_FILE}"
+  _sync_v2bx_ai_route
+}
+
+_sync_v2bx_ai_route() {
+  local updater="/usr/local/bin/update-ai-warp-route.sh"
+  if [[ ! -x "${updater}" ]]; then
+    _info "未检测到 V2bX AI 路由同步脚本，跳过"
+    return 0
+  fi
+  if "${updater}" >/dev/null 2>&1; then
+    _ok "V2bX AI 路由已同步"
+  else
+    _warn "V2bX AI 路由同步失败，请手动执行: ${updater}"
+  fi
 }
 
 # ============================================================
@@ -570,6 +584,13 @@ TPROXY_PORT="\${TPROXY_PORT:-12345}"
 VER="${WARP_VERSION}"
 G='\033[1;32m' R='\033[1;31m' Y='\033[1;33m' C='\033[1;36m' W='\033[1;37m' N='\033[0m'
 
+_sync_ai_route() {
+  local updater="/usr/local/bin/update-ai-warp-route.sh"
+  if [[ -x "\${updater}" ]]; then
+    "\${updater}" >/dev/null 2>&1 || echo -e "\${Y}[WARN]\${N} AI 路由同步失败: \${updater}"
+  fi
+}
+
 case "\${1:-}" in
   status)
     echo
@@ -606,9 +627,9 @@ case "\${1:-}" in
     echo -e "  \${C}www.flytoex.com\${N}"
     echo ;;
 
-  start)   warp-cli connect 2>/dev/null || true; /usr/local/bin/warp-google start ;;
+  start)   warp-cli connect 2>/dev/null || true; /usr/local/bin/warp-google start; _sync_ai_route ;;
   stop)    /usr/local/bin/warp-google stop; warp-cli disconnect 2>/dev/null || true ;;
-  restart) /usr/local/bin/warp-google restart ;;
+  restart) /usr/local/bin/warp-google restart; _sync_ai_route ;;
 
   test)
     ok=1
@@ -689,7 +710,7 @@ case "\${1:-}" in
     curl -s --max-time 8 -x "socks5h://127.0.0.1:\${WARP_PROXY_PORT}" https://ip.sb || echo "获取失败"
     echo ;;
 
-  update) /usr/local/bin/warp-google update; /usr/local/bin/warp-google restart ;;
+  update) /usr/local/bin/warp-google update; /usr/local/bin/warp-google restart; _sync_ai_route ;;
 
   uninstall)
     read -r -p "确定卸载 WARP？[y/N]: " c </dev/tty
@@ -843,6 +864,7 @@ warp_do_install() {
   systemctl restart warp-tproxy >/dev/null 2>&1 || true
   /usr/local/bin/warp-google update || _warn "IP 段更新失败，使用静态列表"
   /usr/local/bin/warp-google start  || true
+  _sync_v2bx_ai_route
 
   echo
   _ok "WARP 安装完成 — www.flytoex.com"
