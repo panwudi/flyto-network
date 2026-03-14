@@ -10,8 +10,13 @@ set -euo pipefail
 
 FLYTO_VERSION="2.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INPUT_DEV="/dev/tty"
-[[ -r "${INPUT_DEV}" ]] || INPUT_DEV="/dev/stdin"
+INPUT_FD=0
+INPUT_DESC="/dev/stdin"
+# Avoid set -e hard-exit when /dev/tty exists but is not attachable.
+if exec 9</dev/tty 2>/dev/null; then
+  INPUT_FD=9
+  INPUT_DESC="/dev/tty"
+fi
 
 # ── 颜色 ────────────────────────────────────────────────────
 BG_GREEN='\033[48;5;22m'   # 墨绿底色
@@ -32,8 +37,8 @@ error()   { echo -e "${R}[ERROR]${N} $*" >&2; }
 prompt_read() {
   local __var_name="$1"
   local __prompt="$2"
-  if ! IFS= read -r -p "${__prompt}" "${__var_name}" <"${INPUT_DEV}"; then
-    error "未检测到可交互输入（${INPUT_DEV}）"
+  if ! IFS= read -r -u "${INPUT_FD}" -p "${__prompt}" "${__var_name}"; then
+    error "未检测到可交互输入（${INPUT_DESC}）"
     error "请直接在可交互终端运行: bash ${SCRIPT_DIR}/flyto.sh"
     exit 1
   fi
@@ -42,8 +47,8 @@ prompt_read() {
 prompt_read_secret() {
   local __var_name="$1"
   local __prompt="$2"
-  if ! IFS= read -rs -p "${__prompt}" "${__var_name}" <"${INPUT_DEV}"; then
-    error "未检测到可交互输入（${INPUT_DEV}）"
+  if ! IFS= read -rs -u "${INPUT_FD}" -p "${__prompt}" "${__var_name}"; then
+    error "未检测到可交互输入（${INPUT_DESC}）"
     error "请直接在可交互终端运行: bash ${SCRIPT_DIR}/flyto.sh"
     exit 1
   fi
