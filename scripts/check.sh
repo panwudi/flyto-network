@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 FILES=(
+  "install.sh"
   "flyto.sh"
   "modules/hk-setup.sh"
   "modules/warp.sh"

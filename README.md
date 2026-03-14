@@ -56,15 +56,26 @@ flyto-network/
 ## 快速开始
 
 ```bash
-# 克隆仓库
-git clone https://github.com/panwudi/flyto-network.git
-cd flyto-network
-
-# 以 root 运行主入口（交互菜单）
-sudo bash flyto.sh
+# 一键在线安装并启动（无需 git）
+curl -fsSL https://raw.githubusercontent.com/panwudi/flyto-network/main/install.sh | sudo bash
 ```
 
+默认会把仓库内容下载到 `/opt/flyto-network`，然后自动执行 `flyto.sh`。
 首次运行需输入解密口令以读取面板配置，解密结果缓存于 `/etc/flyto/.secrets`（权限 600），后续无需重复输入。
+
+如需只下载、不立即启动：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/panwudi/flyto-network/main/install.sh | sudo bash -s -- --download-only
+```
+
+如需保留传统方式，也可以：
+
+```bash
+git clone https://github.com/panwudi/flyto-network.git
+cd flyto-network
+sudo bash flyto.sh
+```
 
 开发者可在仓库内运行基础检查：
 
