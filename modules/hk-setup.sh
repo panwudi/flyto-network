@@ -58,6 +58,17 @@ _hk_strip_ansi() {
   printf '%s' "$1" | sed -E $'s/\x1B\\[[0-9;?]*[ -/]*[@-~]//g'
 }
 
+_hk_is_placeholder() {
+  local v="$(_hk_trim "${1:-}")"
+  local u="${v^^}"
+  [[ -z "${v}" ]] && return 0
+  [[ "${u}" =~ ^REPLACE(_WITH_.*)?$ ]] && return 0
+  [[ "${u}" == "ENDPOINT" ]] && return 0
+  [[ "${u}" == "<EMPTY>" ]] && return 0
+  [[ "${u}" == "NULL" ]] && return 0
+  return 1
+}
+
 _hk_read_raw() {
   local __var_name="$1"
   local __label="$2"
@@ -430,10 +441,10 @@ _input_wg_restore() {
     done <<< "${lines}"
 
     local missing=()
-    [[ -z "${HK_PRIV_KEY}" ]] && missing+=("HK_PRIV_KEY")
-    [[ -z "${HK_WG_ADDR}" ]] && missing+=("HK_WG_ADDR")
-    [[ -z "${US_PUB_KEY}" ]] && missing+=("HK_WG_PEER_PUBKEY / US_PUB_KEY")
-    [[ -z "${US_WG_ENDPOINT}" ]] && missing+=("HK_WG_ENDPOINT")
+    _hk_is_placeholder "${HK_PRIV_KEY}" && missing+=("HK_PRIV_KEY")
+    _hk_is_placeholder "${HK_WG_ADDR}" && missing+=("HK_WG_ADDR")
+    _hk_is_placeholder "${US_PUB_KEY}" && missing+=("HK_WG_PEER_PUBKEY / US_PUB_KEY")
+    _hk_is_placeholder "${US_WG_ENDPOINT}" && missing+=("HK_WG_ENDPOINT")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
       _hk_warn "本次共识别到 ${parsed_count} 个字段"
@@ -463,8 +474,13 @@ _input_wg_restore() {
     [[ -n "${parsed_node_id}" ]] && V2BX_NODE_ID="${parsed_node_id}"
 
     [[ -z "${HK_PUB_KEY}" ]] && HK_PUB_KEY="$(echo "${HK_PRIV_KEY}" | wg pubkey 2>/dev/null || true)"
-    [[ -z "${HK_WG_KEEPALIVE}" ]] && HK_WG_KEEPALIVE="25"
-    [[ -z "${US_WG_TUN_IP}" ]] && US_WG_TUN_IP="10.0.0.1/32"
+    if _hk_is_placeholder "${HK_WG_KEEPALIVE}" || [[ ! "${HK_WG_KEEPALIVE}" =~ ^[0-9]+$ ]]; then
+      HK_WG_KEEPALIVE="25"
+    fi
+    if _hk_is_placeholder "${US_WG_TUN_IP}" || [[ "${US_WG_TUN_IP}" == "/32" ]]; then
+      US_WG_TUN_IP="10.0.0.1/32"
+    fi
+    _hk_is_placeholder "${V2BX_NODE_ID}" && V2BX_NODE_ID=""
 
     _hk_read_required US_WG_TUN_IP "美国节点 WG 隧道 IP（如 10.0.0.1/32）" "${US_WG_TUN_IP}" || return 1
     _hk_read_required HK_WG_KEEPALIVE "WG PersistentKeepalive（秒）" "${HK_WG_KEEPALIVE}" || return 1
@@ -995,12 +1011,24 @@ hk_run_backup() {
   local priv="" pub="" addr="" peer_pub="" endpoint="" us_tun_ip="" keepalive="" node_id=""
   local wan_if="" gw="" pub_ip=""
   if [[ -f /etc/wireguard/wg0.conf ]]; then
-    priv="$(grep 'PrivateKey' /etc/wireguard/wg0.conf | awk '{print $3}')"
-    addr="$(grep '^Address' /etc/wireguard/wg0.conf | awk '{print $3}')"
-    peer_pub="$(grep 'PublicKey' /etc/wireguard/wg0.conf | tail -1 | awk '{print $3}')"
-    endpoint="$(grep 'Endpoint' /etc/wireguard/wg0.conf | awk '{print $3}')"
-    keepalive="$(grep '^PersistentKeepalive' /etc/wireguard/wg0.conf | awk '{print $3}' | head -1 || true)"
-    us_tun_ip="$(grep -oE 'ip route replace [0-9./]+ dev wg0' /etc/wireguard/wg0.conf | awk '{print $4}' | head -1 || true)"
+    priv="$(
+      sed -nE 's/^[[:space:]]*PrivateKey[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' /etc/wireguard/wg0.conf | head -1
+    )"
+    addr="$(
+      sed -nE 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' /etc/wireguard/wg0.conf | head -1
+    )"
+    peer_pub="$(
+      sed -nE 's/^[[:space:]]*PublicKey[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' /etc/wireguard/wg0.conf | tail -1
+    )"
+    endpoint="$(
+      sed -nE 's/^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' /etc/wireguard/wg0.conf | head -1
+    )"
+    keepalive="$(
+      sed -nE 's/^[[:space:]]*PersistentKeepalive[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' /etc/wireguard/wg0.conf | head -1
+    )"
+    us_tun_ip="$(
+      sed -nE 's/.*ip route replace[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+)[[:space:]]+dev[[:space:]]+wg0.*/\1/p' /etc/wireguard/wg0.conf | head -1
+    )"
     [[ -n "${priv}" ]] && pub="$(echo "${priv}" | wg pubkey 2>/dev/null || true)"
   fi
   [[ -z "${keepalive}" ]] && keepalive="25"
@@ -1015,6 +1043,27 @@ hk_run_backup() {
   if [[ -z "${node_id}" ]]; then
     _hk_warn "未自动识别到 V2bX Node ID，备份中将写入占位值，请手动补全"
     node_id="REPLACE_WITH_NODE_ID"
+  fi
+
+  if _hk_is_placeholder "${priv}"; then
+    _hk_warn "未从 wg0.conf 读取到 HK_PRIV_KEY，备份中写入占位值"
+    priv="REPLACE_WITH_HK_PRIV_KEY"
+  fi
+  if _hk_is_placeholder "${addr}"; then
+    _hk_warn "未从 wg0.conf 读取到 HK_WG_ADDR，备份中写入占位值"
+    addr="REPLACE_WITH_HK_WG_ADDR"
+  fi
+  if _hk_is_placeholder "${peer_pub}"; then
+    _hk_warn "未从 wg0.conf 读取到 HK_WG_PEER_PUBKEY，备份中写入占位值"
+    peer_pub="REPLACE_WITH_HK_WG_PEER_PUBKEY"
+  fi
+  if _hk_is_placeholder "${endpoint}"; then
+    _hk_warn "未从 wg0.conf 读取到 HK_WG_ENDPOINT，备份中写入占位值"
+    endpoint="REPLACE_WITH_HK_WG_ENDPOINT"
+  fi
+  if _hk_is_placeholder "${us_tun_ip}" || [[ "${us_tun_ip}" == "/32" ]]; then
+    _hk_warn "未从 wg0.conf 读取到 US_WG_TUN_IP，备份中写入占位值"
+    us_tun_ip="REPLACE_WITH_US_WG_TUN_IP"
   fi
 
   wan_if="$(ip -o -4 route show to default 2>/dev/null | awk '{print $5}' | head -1)"
