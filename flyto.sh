@@ -10,6 +10,8 @@ set -euo pipefail
 
 FLYTO_VERSION="2.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INPUT_DEV="/dev/tty"
+[[ -r "${INPUT_DEV}" ]] || INPUT_DEV="/dev/stdin"
 
 # ── 颜色 ────────────────────────────────────────────────────
 BG_GREEN='\033[48;5;22m'   # 墨绿底色
@@ -26,6 +28,26 @@ info()    { echo -e "${C}[INFO]${N} $*"; }
 success() { echo -e "${G}[OK]${N} $*"; }
 warn()    { echo -e "${Y}[WARN]${N} $*"; }
 error()   { echo -e "${R}[ERROR]${N} $*" >&2; }
+
+prompt_read() {
+  local __var_name="$1"
+  local __prompt="$2"
+  if ! IFS= read -r -p "${__prompt}" "${__var_name}" <"${INPUT_DEV}"; then
+    error "未检测到可交互输入（${INPUT_DEV}）"
+    error "请直接在可交互终端运行: bash ${SCRIPT_DIR}/flyto.sh"
+    exit 1
+  fi
+}
+
+prompt_read_secret() {
+  local __var_name="$1"
+  local __prompt="$2"
+  if ! IFS= read -rs -p "${__prompt}" "${__var_name}" <"${INPUT_DEV}"; then
+    error "未检测到可交互输入（${INPUT_DEV}）"
+    error "请直接在可交互终端运行: bash ${SCRIPT_DIR}/flyto.sh"
+    exit 1
+  fi
+}
 
 # ── Banner ──────────────────────────────────────────────────
 show_banner() {
@@ -76,9 +98,8 @@ load_secrets() {
 
   echo
   echo -e "  ${Y}首次运行需要解密配置文件${N}"
-  echo -n "  请输入解密口令: "
   local pass
-  read -rs pass </dev/tty
+  prompt_read_secret pass "  请输入解密口令: "
   echo
 
   mkdir -p /etc/flyto
@@ -139,7 +160,7 @@ menu_warp() {
     echo -e "  ${G}5.${N} 卸载 WARP"
     echo -e "  ${G}0.${N} 返回主菜单"
     echo
-    read -r -p "  请输入选项 [0-5]: " choice </dev/tty
+    prompt_read choice "  请输入选项 [0-5]: "
     case "${choice}" in
       1)
         load_module warp.sh
@@ -194,7 +215,7 @@ show_main_menu() {
     echo -e "  ${G}5.${N} 清除解密缓存      ${D}(下次运行重新输入口令)${N}"
     echo -e "  ${G}0.${N} 退出"
     echo
-    read -r -p "  请输入选项 [0-5]: " choice </dev/tty
+    prompt_read choice "  请输入选项 [0-5]: "
     echo
     case "${choice}" in
       1)
