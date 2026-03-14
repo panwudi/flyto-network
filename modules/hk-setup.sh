@@ -54,6 +54,10 @@ _hk_trim() {
   printf '%s' "${s}"
 }
 
+_hk_strip_ansi() {
+  printf '%s' "$1" | sed -E $'s/\x1B\\[[0-9;?]*[ -/]*[@-~]//g'
+}
+
 _hk_read_raw() {
   local __var_name="$1"
   local __label="$2"
@@ -191,11 +195,14 @@ _step_base_system() {
   _hk_step "步骤 1/6: 基础系统配置"
 
   export DEBIAN_FRONTEND=noninteractive
+  _hk_info "正在更新软件源（可能需要 1-3 分钟，请耐心等待）..."
   apt-get update -y >/dev/null 2>&1 || true
 
+  _hk_info "正在安装依赖包（期间终端可能短暂无输出，属正常）..."
   local pkgs="wireguard-tools nftables ipset curl ca-certificates dnsutils \
               net-tools iptables iproute2 cron unzip openssl python3"
   for p in ${pkgs}; do
+    _hk_info "安装依赖: ${p}"
     apt-get install -y "${p}" >/dev/null 2>&1 || _hk_warn "跳过可选包: ${p}"
   done
   _hk_ok "依赖安装完成"
@@ -351,7 +358,7 @@ _input_wg_fresh() {
 _input_wg_restore() {
   _hk_step "步骤 3/6: 导入备份配置（恢复模式）"
   while true; do
-    _hk_card "恢复向导：粘贴备份块" "请从 BEGIN FLYTO BACKUP 到 END FLYTO BACKUP 整块粘贴，空行结束"
+    _hk_card "恢复向导：粘贴备份块" "支持包含 ## 分隔线。可用 END 行、连续两次空行或 Ctrl+D 结束"
     echo "  示例："
     echo "    HK_PRIV_KEY=xxxxxxxx"
     echo "    HK_WG_ADDR=10.0.0.3/32"
@@ -359,28 +366,46 @@ _input_wg_restore() {
     echo "    HK_WG_ENDPOINT=5.6.7.8:51820"
     echo "    V2BX_NODE_ID=123"
     echo
-    echo -e "  ${C}----- 开始粘贴（空行结束） -----${N}"
+    echo -e "  ${C}----- 开始粘贴（遇到 END FLYTO BACKUP 或 Ctrl+D 结束） -----${N}"
 
-    local lines="" line=""
+    local lines="" line="" read_any=0 end_seen=0 blank_count=0
     while IFS= read -r line </dev/tty; do
-      [[ -z "${line}" ]] && break
+      line="${line%$'\r'}"
+      line="$(_hk_strip_ansi "${line}")"
+      if [[ "${line}" =~ END[[:space:]]+FLYTO[[:space:]]+BACKUP ]] || [[ "${line}" == "END" ]]; then
+        end_seen=1
+        break
+      fi
+      if [[ -z "${line//[[:space:]]/}" ]]; then
+        blank_count=$((blank_count + 1))
+        if [[ ${read_any} -eq 1 && ${blank_count} -ge 2 ]]; then
+          break
+        fi
+        lines+=$'\n'
+        continue
+      fi
+      blank_count=0
       lines+="${line}"$'\n'
+      [[ -n "${line//[[:space:]]/}" ]] && read_any=1
     done
     echo -e "  ${C}----- 粘贴结束 -----${N}"
     echo
 
-    if [[ -z "${lines//[$' \t\r\n']/}" ]]; then
+    if [[ ${read_any} -eq 0 || -z "${lines//[$' \t\r\n']/}" ]]; then
       _hk_warn "未读取到任何内容，请重新粘贴"
       continue
     fi
+    [[ ${end_seen} -eq 0 ]] && _hk_warn "未检测到 END FLYTO BACKUP，已按当前内容尝试解析"
 
     HK_PRIV_KEY="" HK_PUB_KEY="" HK_WG_ADDR="" US_PUB_KEY="" US_WG_ENDPOINT=""
     HK_WAN_IF="" HK_GW="" HK_PUB_IP=""
     local parsed_keepalive="" parsed_node_id="" parsed_tun_ip=""
     local parsed_wan_if="" parsed_gw="" parsed_pub_ip=""
+    local parsed_count=0
 
     while IFS= read -r line; do
       line="${line%$'\r'}"
+      line="$(_hk_strip_ansi "${line}")"
       [[ -z "${line}" ]] && continue
       [[ "${line}" =~ ^[[:space:]]*# ]] && continue
       [[ "${line}" != *=* ]] && continue
@@ -390,17 +415,17 @@ _input_wg_restore() {
       v="$(_hk_trim "${v}")"
       [[ -z "${k}" ]] && continue
       case "${k}" in
-        HK_PRIV_KEY)                    HK_PRIV_KEY="${v}" ;;
-        HK_PUB_KEY)                     HK_PUB_KEY="${v}" ;;
-        HK_WG_ADDR)                     HK_WG_ADDR="${v}" ;;
-        HK_WG_PEER_PUBKEY|US_PUB_KEY)   US_PUB_KEY="${v}" ;;
-        HK_WG_ENDPOINT)                 US_WG_ENDPOINT="${v}" ;;
-        HK_WG_KEEPALIVE)                parsed_keepalive="${v}" ;;
-        US_WG_TUN_IP|US_WG_ADDR)        parsed_tun_ip="${v}" ;;
-        HK_WAN_IF)                      parsed_wan_if="${v}" ;;
-        HK_GW)                          parsed_gw="${v}" ;;
-        HK_PUB_IP)                      parsed_pub_ip="${v}" ;;
-        V2BX_NODE_ID|NODE_ID)           parsed_node_id="${v}" ;;
+        HK_PRIV_KEY)                    HK_PRIV_KEY="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        HK_PUB_KEY)                     HK_PUB_KEY="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        HK_WG_ADDR)                     HK_WG_ADDR="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        HK_WG_PEER_PUBKEY|US_PUB_KEY)   US_PUB_KEY="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        HK_WG_ENDPOINT)                 US_WG_ENDPOINT="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        HK_WG_KEEPALIVE)                parsed_keepalive="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        US_WG_TUN_IP|US_WG_ADDR)        parsed_tun_ip="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        HK_WAN_IF)                      parsed_wan_if="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        HK_GW)                          parsed_gw="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        HK_PUB_IP)                      parsed_pub_ip="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        V2BX_NODE_ID|NODE_ID)           parsed_node_id="${v}"; parsed_count=$((parsed_count + 1)) ;;
       esac
     done <<< "${lines}"
 
@@ -411,14 +436,23 @@ _input_wg_restore() {
     [[ -z "${US_WG_ENDPOINT}" ]] && missing+=("HK_WG_ENDPOINT")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
+      _hk_warn "本次共识别到 ${parsed_count} 个字段"
       _hk_err "备份解析失败，缺少必填字段:"
       for item in "${missing[@]}"; do
         echo "    - ${item}"
       done
-      if _hk_confirm "是否重新粘贴备份块？" "Y"; then
-        continue
-      fi
-      return 1
+      echo
+      _hk_warn "可能原因：复制不完整、粘贴过早结束、包含不可见控制字符"
+      local action=""
+      while true; do
+        _hk_read_raw action "输入 r 重新粘贴 / q 返回上级菜单" "r" || return 1
+        action="${action,,}"
+        case "${action}" in
+          ""|r|retry) continue 2 ;;
+          q|quit|exit) return 1 ;;
+          *) _hk_warn "请输入 r 或 q" ;;
+        esac
+      done
     fi
 
     [[ -n "${parsed_keepalive}" ]] && HK_WG_KEEPALIVE="${parsed_keepalive}"
@@ -970,7 +1004,20 @@ hk_run_backup() {
     [[ -n "${priv}" ]] && pub="$(echo "${priv}" | wg pubkey 2>/dev/null || true)"
   fi
   [[ -z "${keepalive}" ]] && keepalive="25"
-  node_id="$(awk '/NodeID:/ {print $2; exit}' /etc/V2bX/config.yml 2>/dev/null || true)"
+  node_id="$(
+    sed -nE 's/^[[:space:]]*NodeID:[[:space:]]*([0-9]+).*$/\1/p' /etc/V2bX/config.yml 2>/dev/null | head -1
+  )"
+  if [[ -z "${node_id}" ]]; then
+    node_id="$(
+      sed -nE 's/^[[:space:]]*NodeID:[[:space:]]*([0-9]+).*$/\1/p' /usr/local/etc/V2bX/config.yml 2>/dev/null | head -1
+    )"
+  fi
+  if [[ -z "${node_id}" ]]; then
+    _hk_warn "未自动识别到 V2bX Node ID，请手动输入用于备份"
+    if _hk_read_node_id "${V2BX_NODE_ID:-}"; then
+      node_id="${V2BX_NODE_ID}"
+    fi
+  fi
 
   wan_if="$(ip -o -4 route show to default 2>/dev/null | awk '{print $5}' | head -1)"
   gw="$(ip -o -4 route show to default 2>/dev/null | awk '{print $3}' | head -1)"
