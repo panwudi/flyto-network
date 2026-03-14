@@ -154,6 +154,45 @@ _hk_confirm() {
   done
 }
 
+_hk_step_nav() {
+  local prompt="${1:-继续下一步？}"
+  local ans=""
+  while true; do
+    if ! read -r -p "  ${prompt} [Enter/y=继续, r=返回, q=退出]: " ans </dev/tty; then
+      echo
+      _hk_warn "未检测到交互输入，默认继续"
+      return 0
+    fi
+    ans="$(_hk_trim "${ans}")"
+    case "${ans}" in
+      ""|[Yy]|[Yy][Ee][Ss]) return 0 ;;
+      [Rr]|[Bb][Aa][Cc][Kk]|[Rr][Ee][Tt][Uu][Rr][Nn]) return 2 ;;
+      [Qq]|[Qq][Uu][Ii][Tt]|[Ee][Xx][Ii][Tt]) return 3 ;;
+      *) _hk_warn "请输入 Enter/y/r/q" ;;
+    esac
+  done
+}
+
+_hk_gate_after_step() {
+  local prompt="$1"
+  local rc=0
+  _hk_step_nav "${prompt}" || rc=$?
+  case "${rc}" in
+    0) return 0 ;;
+    2)
+      _hk_info "按你的选择返回上级菜单"
+      return 2
+      ;;
+    3)
+      _hk_warn "按你的选择退出脚本"
+      exit 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 _hk_mask_secret() {
   local v="${1:-}"
   local n="${#v}"
@@ -1246,14 +1285,14 @@ hk_run_backup() {
   if [[ -z "${us_tun_ip}" ]]; then
     if [[ -n "${wg_ns}" ]]; then
       us_tun_ip="$(
-        ip netns exec "${wg_ns}" ip -4 route show dev "${wg_iface}" scope link 2>/dev/null \
-          | awk '!/proto kernel/ {print $1; exit}' \
+        ip netns exec "${wg_ns}" ip -4 route show dev "${wg_iface}" 2>/dev/null \
+          | awk '$1 ~ /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([0-9]|[1-2][0-9]|3[0-2])$/ && $1 != "0.0.0.0/0" {print $1; exit}' \
           | head -1 || true
       )"
     else
       us_tun_ip="$(
-        ip -4 route show dev wg0 scope link 2>/dev/null \
-          | awk '!/proto kernel/ {print $1; exit}' \
+        ip -4 route show dev wg0 2>/dev/null \
+          | awk '$1 ~ /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([0-9]|[1-2][0-9]|3[0-2])$/ && $1 != "0.0.0.0/0" {print $1; exit}' \
           | head -1 || true
       )"
     fi
@@ -1307,6 +1346,14 @@ hk_run_backup() {
   fi
   if _hk_is_placeholder "${us_tun_ip}" || [[ "${us_tun_ip}" == "/32" ]]; then
     _hk_warn "未读取到 US_WG_TUN_IP，备份中写入占位值"
+    _hk_warn "可手动执行以下命令确认后再填入恢复块："
+    if [[ -n "${wg_ns}" ]]; then
+      echo "    ip netns exec ${wg_ns} ip -4 route show dev ${wg_iface}"
+      echo "    ip netns exec ${wg_ns} ip -o -4 addr show dev ${wg_iface}"
+    else
+      echo "    ip -4 route show dev wg0"
+      echo "    ip -o -4 addr show dev wg0"
+    fi
     us_tun_ip="REPLACE_WITH_US_WG_TUN_IP"
   fi
 
@@ -1373,12 +1420,38 @@ hk_run_fresh() {
   [[ "${FLYTO_VERSION:-}" == "" ]] && _hk_banner
   _check_root
   _check_secrets
+  local gate_rc=0
+
   _step_base_system
+  gate_rc=0; _hk_gate_after_step "步骤 1/6 完成，继续步骤 2/6 吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _step_collect_network
+  gate_rc=0; _hk_gate_after_step "步骤 2/6 完成，继续步骤 3/6 吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _input_wg_fresh
+  gate_rc=0; _hk_gate_after_step "步骤 3/6 完成，继续步骤 4/6 吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _step_setup_wireguard
+  gate_rc=0; _hk_gate_after_step "步骤 4/6 完成，继续步骤 5/6 吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _step_install_v2bx
+  gate_rc=0; _hk_gate_after_step "步骤 5/6 完成，继续步骤 6/6 吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _step_panel_ip_monitor
+  gate_rc=0; _hk_gate_after_step "步骤 6/6 完成，继续可选 WARP 安装吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _step_optional_warp
   _print_deploy_summary
 }
@@ -1420,8 +1493,18 @@ hk_run_restore() {
   _check_root
   _check_secrets
   _hk_card "恢复模式" "将使用备份块恢复 WireGuard 与 V2bX 配置"
+  local gate_rc=0
+
   _step_base_system
+  gate_rc=0; _hk_gate_after_step "步骤 1/6 完成，继续步骤 3/6（粘贴恢复块）吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _input_wg_restore
+  gate_rc=0; _hk_gate_after_step "恢复块解析完成，继续网络与 WireGuard 部署吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   if [[ -z "${HK_WAN_IF}" || -z "${HK_GW}" || -z "${HK_PUB_IP}" ]]; then
     _step_collect_network
   else
@@ -1431,9 +1514,26 @@ hk_run_restore() {
     echo "${HK_PUB_IP}" > "${HK_STATE_DIR}/pub_ip"
     _hk_ok "使用备份中的网络信息: ${HK_WAN_IF} / ${HK_GW} / ${HK_PUB_IP}"
   fi
+
+  gate_rc=0; _hk_gate_after_step "网络信息就绪，继续配置 WireGuard 吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _step_setup_wireguard
+  gate_rc=0; _hk_gate_after_step "WireGuard 完成，继续安装 V2bX 吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _step_install_v2bx
+  gate_rc=0; _hk_gate_after_step "V2bX 配置完成，继续部署面板 IP 监控吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _step_panel_ip_monitor
+  gate_rc=0; _hk_gate_after_step "面板监控完成，继续可选 WARP 安装吗？" || gate_rc=$?
+  [[ ${gate_rc} -eq 2 ]] && return 0
+  [[ ${gate_rc} -ne 0 ]] && return 1
+
   _step_optional_warp
   _print_deploy_summary
 }
