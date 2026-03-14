@@ -275,11 +275,11 @@ show_main_menu() {
     echo -e "${C}  ║                    主菜单 Main Menu                 ║${N}"
     echo -e "${C}  ╚══════════════════════════════════════════════════════╝${N}"
     echo
-    echo -e "  ${G}1.${N} 香港节点完整部署  ${D}(WireGuard + V2bX + 可选 WARP)${N}"
-    echo -e "  ${G}2.${N} WARP 管理         ${D}(安装/状态/诊断/重启/卸载)${N}"
-    echo -e "  ${G}3.${N} 备份当前配置      ${D}(重装前导出 WireGuard 关键参数)${N}"
-    echo -e "  ${G}4.${N} 恢复配置          ${D}(从备份内容恢复部署)${N}"
-    echo -e "  ${G}5.${N} 清除解密缓存      ${D}(下次重新输入口令)${N}"
+    echo -e "  ${G}1.${N} 备份当前配置      ${D}(重装前导出 WireGuard / V2bX 关键参数)${N}"
+    echo -e "  ${G}2.${N} 恢复当前配置      ${D}(从备份块恢复 WireGuard + V2bX)${N}"
+    echo -e "  ${G}3.${N} WARP 管理         ${D}(安装/状态/诊断/重启/卸载)${N}"
+    echo -e "  ${G}4.${N} 完整全新部署      ${D}(WireGuard + V2bX + 可选 WARP)${N}"
+    echo -e "  ${G}5.${N} 清除解密信息      ${D}(下次重新输入解密密钥)${N}"
     echo -e "  ${G}0.${N} 退出"
     echo
     prompt_read choice "  请输入选项 [0-5]: "
@@ -288,23 +288,23 @@ show_main_menu() {
       1)
         load_secrets
         load_module hk-setup.sh
-        run_and_warn "香港节点安装" hk_run_install
+        run_and_warn "配置备份" hk_run_backup
         pause_screen "  按回车返回主菜单..."
         ;;
       2)
-        load_module warp.sh
-        run_and_warn "WARP 菜单" menu_warp
-        ;;
-      3)
         load_secrets
         load_module hk-setup.sh
-        run_and_warn "配置备份" hk_run_backup
+        run_and_warn "配置恢复" hk_run_restore
         pause_screen "  按回车返回主菜单..."
+        ;;
+      3)
+        load_module warp.sh
+        run_and_warn "WARP 菜单" menu_warp
         ;;
       4)
         load_secrets
         load_module hk-setup.sh
-        run_and_warn "配置恢复" hk_run_restore
+        run_and_warn "完整全新部署" hk_run_fresh
         pause_screen "  按回车返回主菜单..."
         ;;
       5)

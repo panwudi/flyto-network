@@ -28,6 +28,123 @@ _hk_warn()  { echo -e "${Y}[HK]${N} $*" >&2; }
 _hk_err()   { echo -e "${R}[HK]${N} $*" >&2; }
 _hk_step()  { echo; echo -e "  ${O}▶ $*${N}"; echo; }
 
+_hk_card() {
+  local title="$1"
+  local subtitle="${2:-}"
+  echo
+  echo -e "  ${C}╔════════════════════════════════════════════════════════════╗${N}"
+  echo -e "  ${C}║${N} ${W}${title}${N}"
+  [[ -n "${subtitle}" ]] && echo -e "  ${C}║${N} ${D}${subtitle}${N}"
+  echo -e "  ${C}╚════════════════════════════════════════════════════════════╝${N}"
+}
+
+_hk_pause() {
+  local dummy=""
+  if ! read -r -p "  按回车继续..." dummy </dev/tty; then
+    echo
+    _hk_warn "未检测到交互输入，跳过暂停"
+  fi
+  echo
+}
+
+_hk_trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "${s}"
+}
+
+_hk_read_raw() {
+  local __var_name="$1"
+  local __label="$2"
+  local __default="${3-__HK_NO_DEFAULT__}"
+  local __value=""
+  if [[ "${__default}" == "__HK_NO_DEFAULT__" ]]; then
+    if ! read -r -p "  ${__label}: " __value </dev/tty; then
+      _hk_err "未检测到交互输入，请在终端直接运行脚本"
+      return 1
+    fi
+  else
+    if ! read -r -p "  ${__label} [${__default}]: " __value </dev/tty; then
+      _hk_err "未检测到交互输入，请在终端直接运行脚本"
+      return 1
+    fi
+    [[ -z "${__value}" ]] && __value="${__default}"
+  fi
+  printf -v "${__var_name}" '%s' "${__value}"
+  return 0
+}
+
+_hk_read_required() {
+  local __var_name="$1"
+  local __label="$2"
+  local __default="${3-__HK_NO_DEFAULT__}"
+  local __value=""
+  while true; do
+    _hk_read_raw __value "${__label}" "${__default}" || return 1
+    __value="$(_hk_trim "${__value}")"
+    if [[ -n "${__value}" ]]; then
+      printf -v "${__var_name}" '%s' "${__value}"
+      return 0
+    fi
+    _hk_warn "该项不能为空，请重新输入"
+  done
+}
+
+_hk_read_node_id() {
+  local __default="${1-}"
+  while true; do
+    if [[ -n "${__default}" ]]; then
+      _hk_read_required V2BX_NODE_ID "V2bX 节点 ID（纯数字）" "${__default}" || return 1
+    else
+      _hk_read_required V2BX_NODE_ID "V2bX 节点 ID（纯数字）" || return 1
+    fi
+    if [[ "${V2BX_NODE_ID}" =~ ^[0-9]+$ ]]; then
+      return 0
+    fi
+    _hk_warn "节点 ID 只能是数字，请重新输入"
+    __default=""
+  done
+}
+
+_hk_confirm() {
+  local prompt="$1"
+  local default="${2:-N}"
+  local ans=""
+  while true; do
+    if [[ "${default}" == "Y" ]]; then
+      if ! read -r -p "  ${prompt} [Y/n]: " ans </dev/tty; then
+        _hk_err "未检测到交互输入，请在终端直接运行脚本"
+        return 1
+      fi
+      [[ -z "${ans}" ]] && ans="Y"
+    else
+      if ! read -r -p "  ${prompt} [y/N]: " ans </dev/tty; then
+        _hk_err "未检测到交互输入，请在终端直接运行脚本"
+        return 1
+      fi
+      [[ -z "${ans}" ]] && ans="N"
+    fi
+    case "${ans}" in
+      [Yy]|[Yy][Ee][Ss]) return 0 ;;
+      [Nn]|[Nn][Oo]) return 1 ;;
+      *) _hk_warn "请输入 y 或 n" ;;
+    esac
+  done
+}
+
+_hk_mask_secret() {
+  local v="${1:-}"
+  local n="${#v}"
+  if [[ ${n} -eq 0 ]]; then
+    printf '%s' "<empty>"
+  elif [[ ${n} -le 8 ]]; then
+    printf '%s' "已读取 (${n} chars)"
+  else
+    printf '%s' "${v:0:4}...${v: -4} (${n} chars)"
+  fi
+}
+
 HK_STATE_DIR="/etc/hk-setup"
 
 # ============================================================
@@ -150,11 +267,9 @@ _step_collect_network() {
   _hk_step "步骤 2/6: 采集本机网络信息"
 
   # 若 wg0 在运行则暂停（避免探测到美国 IP）
-  local wg0_was_up=0
   if ip link show wg0 >/dev/null 2>&1 && [[ "$(ip link show wg0 | grep -c 'UP')" -gt 0 ]]; then
     _hk_warn "检测到 wg0 运行中，暂停以获取本机网络信息..."
     systemctl stop wg-quick@wg0 2>/dev/null || true
-    wg0_was_up=1
   fi
 
   # 探测
@@ -163,15 +278,28 @@ _step_collect_network() {
   HK_PUB_IP="$(curl -4 -s --max-time 8 https://ifconfig.io 2>/dev/null \
     || curl -4 -s --max-time 8 https://ip.sb 2>/dev/null || echo '')"
 
+  _hk_card "网络信息确认" "可直接回车接受自动探测值，也可以手动覆盖"
+  echo -e "  ${W}自动探测结果${N}"
+  echo "    WAN 接口: ${HK_WAN_IF:-<未检测到>}"
+  echo "    默认网关: ${HK_GW:-<未检测到>}"
+  echo "    公网 IP : ${HK_PUB_IP:-<未检测到>}"
   echo
-  echo -e "  探测结果（可直接回车确认，或输入新值覆盖）:"
-  echo
-  read -r -p "  WAN 接口  [${HK_WAN_IF}]: " inp </dev/tty
-  [[ -n "${inp}" ]] && HK_WAN_IF="${inp}"
-  read -r -p "  默认网关  [${HK_GW}]: "   inp </dev/tty
-  [[ -n "${inp}" ]] && HK_GW="${inp}"
-  read -r -p "  公网 IP   [${HK_PUB_IP}]: " inp </dev/tty
-  [[ -n "${inp}" ]] && HK_PUB_IP="${inp}"
+
+  if [[ -n "${HK_WAN_IF}" ]]; then
+    _hk_read_required HK_WAN_IF "WAN 接口（如 eth0 / ens3）" "${HK_WAN_IF}" || return 1
+  else
+    _hk_read_required HK_WAN_IF "WAN 接口（如 eth0 / ens3）" || return 1
+  fi
+  if [[ -n "${HK_GW}" ]]; then
+    _hk_read_required HK_GW "默认网关" "${HK_GW}" || return 1
+  else
+    _hk_read_required HK_GW "默认网关" || return 1
+  fi
+  if [[ -n "${HK_PUB_IP}" ]]; then
+    _hk_read_required HK_PUB_IP "公网 IP（香港节点）" "${HK_PUB_IP}" || return 1
+  else
+    _hk_read_required HK_PUB_IP "公网 IP（香港节点）" || return 1
+  fi
 
   # 保存
   mkdir -p "${HK_STATE_DIR}"
@@ -187,52 +315,147 @@ _step_collect_network() {
 # 步骤三：WireGuard 配置输入
 # ============================================================
 HK_PRIV_KEY="" HK_WG_ADDR="" US_PUB_KEY="" US_WG_ENDPOINT="" US_WG_TUN_IP=""
-HK_PUB_KEY="" HK_WG_KEEPALIVE=25
+HK_PUB_KEY="" HK_WG_KEEPALIVE=25 V2BX_NODE_ID=""
 
 _input_wg_fresh() {
   _hk_step "步骤 3/6: 输入 WireGuard 配置（全新安装）"
-  echo -e "  ${D}在美国节点执行 'wg show' 获取以下信息${N}"
-  echo
-  read -r -p "  香港节点 WG 私钥 (PrivateKey): " HK_PRIV_KEY </dev/tty
-  read -r -p "  香港节点 WG 隧道地址 (如 10.0.0.3/32): " HK_WG_ADDR </dev/tty
-  read -r -p "  美国节点 WG 公钥: " US_PUB_KEY </dev/tty
-  read -r -p "  美国节点 WG Endpoint (IP:端口): " US_WG_ENDPOINT </dev/tty
-  read -r -p "  美国节点 WG 隧道 IP (如 10.0.0.1/32): " US_WG_TUN_IP </dev/tty
-  read -r -p "  V2bX 节点 ID (纯数字): " V2BX_NODE_ID </dev/tty
-  read -r -p "  WG PersistentKeepalive [${HK_WG_KEEPALIVE}]: " inp </dev/tty
-  [[ -n "${inp}" ]] && HK_WG_KEEPALIVE="${inp}"
-  # 派生公钥
-  HK_PUB_KEY="$(echo "${HK_PRIV_KEY}" | wg pubkey 2>/dev/null || true)"
+  while true; do
+    _hk_card "WireGuard 参数录入（全新安装）" "可在美国节点执行 wg show 获取公钥与 endpoint"
+    _hk_read_required HK_PRIV_KEY "香港节点 WG 私钥（PrivateKey）" || return 1
+    _hk_read_required HK_WG_ADDR "香港节点 WG 隧道地址（如 10.0.0.3/32）" || return 1
+    _hk_read_required US_PUB_KEY "美国节点 WG 公钥（Peer PublicKey）" || return 1
+    _hk_read_required US_WG_ENDPOINT "美国节点 WG Endpoint（IP:端口）" || return 1
+    _hk_read_required US_WG_TUN_IP "美国节点 WG 隧道 IP（如 10.0.0.1/32）" "10.0.0.1/32" || return 1
+    _hk_read_node_id "${V2BX_NODE_ID:-}" || return 1
+    _hk_read_required HK_WG_KEEPALIVE "WG PersistentKeepalive（秒）" "${HK_WG_KEEPALIVE:-25}" || return 1
+
+    # 派生公钥
+    HK_PUB_KEY="$(echo "${HK_PRIV_KEY}" | wg pubkey 2>/dev/null || true)"
+
+    _hk_card "请确认录入信息"
+    echo "    HK_PRIV_KEY    = $(_hk_mask_secret "${HK_PRIV_KEY}")"
+    echo "    HK_WG_ADDR     = ${HK_WG_ADDR}"
+    echo "    US_WG_PUBKEY   = ${US_PUB_KEY}"
+    echo "    US_WG_ENDPOINT = ${US_WG_ENDPOINT}"
+    echo "    US_WG_TUN_IP   = ${US_WG_TUN_IP}"
+    echo "    KEEPALIVE      = ${HK_WG_KEEPALIVE}"
+    echo "    V2BX_NODE_ID   = ${V2BX_NODE_ID}"
+    echo
+    if _hk_confirm "以上信息是否正确并继续部署？" "Y"; then
+      return 0
+    fi
+    _hk_info "将重新录入 WireGuard 参数"
+  done
 }
 
 _input_wg_restore() {
-  _hk_step "步骤 3/6: 粘贴备份配置（恢复模式）"
-  echo -e "  ${D}将备份输出整块粘贴，空白行结束：${N}"
-  echo
-  local lines=""
-  while IFS= read -r line </dev/tty; do
-    [[ -z "${line}" ]] && break
-    lines+="${line}"$'\n'
+  _hk_step "步骤 3/6: 导入备份配置（恢复模式）"
+  while true; do
+    _hk_card "恢复向导：粘贴备份块" "请从 BEGIN FLYTO BACKUP 到 END FLYTO BACKUP 整块粘贴，空行结束"
+    echo "  示例："
+    echo "    HK_PRIV_KEY=xxxxxxxx"
+    echo "    HK_WG_ADDR=10.0.0.3/32"
+    echo "    HK_WG_PEER_PUBKEY=xxxxxxxx"
+    echo "    HK_WG_ENDPOINT=5.6.7.8:51820"
+    echo "    V2BX_NODE_ID=123"
+    echo
+    echo -e "  ${C}----- 开始粘贴（空行结束） -----${N}"
+
+    local lines="" line=""
+    while IFS= read -r line </dev/tty; do
+      [[ -z "${line}" ]] && break
+      lines+="${line}"$'\n'
+    done
+    echo -e "  ${C}----- 粘贴结束 -----${N}"
+    echo
+
+    if [[ -z "${lines//[$' \t\r\n']/}" ]]; then
+      _hk_warn "未读取到任何内容，请重新粘贴"
+      continue
+    fi
+
+    HK_PRIV_KEY="" HK_PUB_KEY="" HK_WG_ADDR="" US_PUB_KEY="" US_WG_ENDPOINT=""
+    local parsed_keepalive="" parsed_node_id="" parsed_tun_ip=""
+    local parsed_wan_if="" parsed_gw="" parsed_pub_ip=""
+
+    while IFS= read -r line; do
+      line="${line%$'\r'}"
+      [[ -z "${line}" ]] && continue
+      [[ "${line}" =~ ^[[:space:]]*# ]] && continue
+      [[ "${line}" != *=* ]] && continue
+      local k="${line%%=*}"
+      local v="${line#*=}"
+      k="$(_hk_trim "${k}")"
+      v="$(_hk_trim "${v}")"
+      [[ -z "${k}" ]] && continue
+      case "${k}" in
+        HK_PRIV_KEY)                    HK_PRIV_KEY="${v}" ;;
+        HK_PUB_KEY)                     HK_PUB_KEY="${v}" ;;
+        HK_WG_ADDR)                     HK_WG_ADDR="${v}" ;;
+        HK_WG_PEER_PUBKEY|US_PUB_KEY)   US_PUB_KEY="${v}" ;;
+        HK_WG_ENDPOINT)                 US_WG_ENDPOINT="${v}" ;;
+        HK_WG_KEEPALIVE)                parsed_keepalive="${v}" ;;
+        US_WG_TUN_IP|US_WG_ADDR)        parsed_tun_ip="${v}" ;;
+        HK_WAN_IF)                      parsed_wan_if="${v}" ;;
+        HK_GW)                          parsed_gw="${v}" ;;
+        HK_PUB_IP)                      parsed_pub_ip="${v}" ;;
+        V2BX_NODE_ID|NODE_ID)           parsed_node_id="${v}" ;;
+      esac
+    done <<< "${lines}"
+
+    local missing=()
+    [[ -z "${HK_PRIV_KEY}" ]] && missing+=("HK_PRIV_KEY")
+    [[ -z "${HK_WG_ADDR}" ]] && missing+=("HK_WG_ADDR")
+    [[ -z "${US_PUB_KEY}" ]] && missing+=("HK_WG_PEER_PUBKEY / US_PUB_KEY")
+    [[ -z "${US_WG_ENDPOINT}" ]] && missing+=("HK_WG_ENDPOINT")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+      _hk_err "备份解析失败，缺少必填字段:"
+      for item in "${missing[@]}"; do
+        echo "    - ${item}"
+      done
+      if _hk_confirm "是否重新粘贴备份块？" "Y"; then
+        continue
+      fi
+      return 1
+    fi
+
+    [[ -n "${parsed_keepalive}" ]] && HK_WG_KEEPALIVE="${parsed_keepalive}"
+    [[ -n "${parsed_tun_ip}" ]] && US_WG_TUN_IP="${parsed_tun_ip}"
+    [[ -n "${parsed_wan_if}" ]] && HK_WAN_IF="${parsed_wan_if}"
+    [[ -n "${parsed_gw}" ]] && HK_GW="${parsed_gw}"
+    [[ -n "${parsed_pub_ip}" ]] && HK_PUB_IP="${parsed_pub_ip}"
+    [[ -n "${parsed_node_id}" ]] && V2BX_NODE_ID="${parsed_node_id}"
+
+    [[ -z "${HK_PUB_KEY}" ]] && HK_PUB_KEY="$(echo "${HK_PRIV_KEY}" | wg pubkey 2>/dev/null || true)"
+    [[ -z "${HK_WG_KEEPALIVE}" ]] && HK_WG_KEEPALIVE="25"
+    [[ -z "${US_WG_TUN_IP}" ]] && US_WG_TUN_IP="10.0.0.1/32"
+
+    _hk_read_required US_WG_TUN_IP "美国节点 WG 隧道 IP（如 10.0.0.1/32）" "${US_WG_TUN_IP}" || return 1
+    _hk_read_required HK_WG_KEEPALIVE "WG PersistentKeepalive（秒）" "${HK_WG_KEEPALIVE}" || return 1
+    _hk_read_node_id "${V2BX_NODE_ID:-}" || return 1
+
+    _hk_card "恢复参数确认"
+    echo "    HK_PRIV_KEY    = $(_hk_mask_secret "${HK_PRIV_KEY}")"
+    echo "    HK_WG_ADDR     = ${HK_WG_ADDR}"
+    echo "    US_WG_PUBKEY   = ${US_PUB_KEY}"
+    echo "    US_WG_ENDPOINT = ${US_WG_ENDPOINT}"
+    echo "    US_WG_TUN_IP   = ${US_WG_TUN_IP}"
+    echo "    KEEPALIVE      = ${HK_WG_KEEPALIVE}"
+    echo "    V2BX_NODE_ID   = ${V2BX_NODE_ID}"
+    if [[ -n "${HK_WAN_IF}" || -n "${HK_GW}" || -n "${HK_PUB_IP}" ]]; then
+      echo
+      echo "    网络信息（来自备份）"
+      echo "    HK_WAN_IF      = ${HK_WAN_IF:-<空>}"
+      echo "    HK_GW          = ${HK_GW:-<空>}"
+      echo "    HK_PUB_IP      = ${HK_PUB_IP:-<空>}"
+    fi
+    echo
+    if _hk_confirm "以上信息是否正确并继续部署？" "Y"; then
+      return 0
+    fi
+    _hk_info "将重新进入恢复粘贴流程"
   done
-  # 解析 KEY=VALUE 格式
-  while IFS='=' read -r k v; do
-    [[ "${k}" =~ ^#.*$ || -z "${k}" ]] && continue
-    k="${k//[[:space:]]/}"
-    v="${v//[[:space:]]/}"
-    case "${k}" in
-      HK_PRIV_KEY)    HK_PRIV_KEY="${v}"    ;;
-      HK_PUB_KEY)     HK_PUB_KEY="${v}"     ;;
-      HK_WG_ADDR)     HK_WG_ADDR="${v}"     ;;
-      HK_WG_PEER_PUBKEY|US_PUB_KEY) US_PUB_KEY="${v}"   ;;
-      HK_WG_ENDPOINT) US_WG_ENDPOINT="${v}" ;;
-      HK_WAN_IF)      HK_WAN_IF="${v}"      ;;
-      HK_GW)          HK_GW="${v}"          ;;
-      HK_PUB_IP)      HK_PUB_IP="${v}"      ;;
-    esac
-  done <<< "${lines}"
-  read -r -p "  V2bX 节点 ID (纯数字): " V2BX_NODE_ID </dev/tty
-  [[ -z "${HK_PUB_KEY}" ]] && \
-    HK_PUB_KEY="$(echo "${HK_PRIV_KEY}" | wg pubkey 2>/dev/null || true)"
 }
 
 # ============================================================
@@ -676,12 +899,8 @@ MONITOR
 # 可选步骤：WARP 安装
 # ============================================================
 _step_optional_warp() {
-  echo
-  echo -e "  ${O}▶ 可选：安装 WARP（Google Gemini 送中）${N}"
-  echo -e "  ${D}安装后服务器可直接访问 Google / Gemini API，无需额外配置${N}"
-  echo
-  read -r -p "  是否现在安装 WARP？[y/N]: " ans </dev/tty
-  if [[ "${ans}" =~ ^[Yy]$ ]]; then
+  _hk_card "可选步骤：安装 WARP" "安装后可直接访问 Google / Gemini 与 AI 相关流量（按路由策略）"
+  if _hk_confirm "是否现在安装 WARP？" "N"; then
     # 加载 warp 模块（如果未加载）
     if ! command -v warp_do_install >/dev/null 2>&1; then
       local warp_mod
@@ -738,14 +957,20 @@ hk_run_backup() {
     systemctl stop wg-quick@wg0; wg_was_up=1; sleep 1
   fi
 
-  local priv="" pub="" addr="" peer_pub="" endpoint="" wan_if="" gw="" pub_ip=""
+  local priv="" pub="" addr="" peer_pub="" endpoint="" us_tun_ip="" keepalive="" node_id=""
+  local wan_if="" gw="" pub_ip=""
   if [[ -f /etc/wireguard/wg0.conf ]]; then
     priv="$(grep 'PrivateKey' /etc/wireguard/wg0.conf | awk '{print $3}')"
     addr="$(grep '^Address' /etc/wireguard/wg0.conf | awk '{print $3}')"
     peer_pub="$(grep 'PublicKey' /etc/wireguard/wg0.conf | tail -1 | awk '{print $3}')"
     endpoint="$(grep 'Endpoint' /etc/wireguard/wg0.conf | awk '{print $3}')"
+    keepalive="$(grep '^PersistentKeepalive' /etc/wireguard/wg0.conf | awk '{print $3}' | head -1 || true)"
+    us_tun_ip="$(grep -oE 'ip route replace [0-9./]+ dev wg0' /etc/wireguard/wg0.conf | awk '{print $4}' | head -1 || true)"
     [[ -n "${priv}" ]] && pub="$(echo "${priv}" | wg pubkey 2>/dev/null || true)"
   fi
+  [[ -z "${keepalive}" ]] && keepalive="25"
+  node_id="$(awk '/NodeID:/ {print $2; exit}' /etc/V2bX/config.yml 2>/dev/null || true)"
+
   wan_if="$(ip -o -4 route show to default 2>/dev/null | awk '{print $5}' | head -1)"
   gw="$(ip -o -4 route show to default 2>/dev/null | awk '{print $3}' | head -1)"
   pub_ip="$(curl -4 -s --max-time 8 https://ifconfig.io 2>/dev/null || true)"
@@ -761,10 +986,12 @@ hk_run_backup() {
   echo "HK_WG_PEER_PUBKEY=${peer_pub}"
   echo "HK_WG_ENDPOINT=${endpoint}"
   echo "HK_WG_ALLOWED_IPS=0.0.0.0/0"
-  echo "HK_WG_KEEPALIVE=25"
+  echo "HK_WG_KEEPALIVE=${keepalive}"
+  echo "US_WG_TUN_IP=${us_tun_ip}"
   echo "HK_WAN_IF=${wan_if}"
   echo "HK_GW=${gw}"
   echo "HK_PUB_IP=${pub_ip}"
+  echo "V2BX_NODE_ID=${node_id}"
   echo "########### END FLYTO BACKUP ###########"
   echo
 
@@ -803,53 +1030,49 @@ hk_run_backup() {
 # ============================================================
 # 安装入口（全新 + 恢复复用同一流程）
 # ============================================================
+hk_run_fresh() {
+  [[ "${FLYTO_VERSION:-}" == "" ]] && _hk_banner
+  _check_root
+  _check_secrets
+  _step_base_system
+  _step_collect_network
+  _input_wg_fresh
+  _step_setup_wireguard
+  _step_install_v2bx
+  _step_panel_ip_monitor
+  _step_optional_warp
+  _print_deploy_summary
+}
+
 hk_run_install() {
   [[ "${FLYTO_VERSION:-}" == "" ]] && _hk_banner
   _check_root
   _check_secrets
 
-  echo
-  echo -e "  ${W}请选择安装模式:${N}"
-  echo -e "  ${G}1.${N} 全新安装  ${D}(逐字段输入 WireGuard 配置)${N}"
-  echo -e "  ${G}2.${N} 恢复模式  ${D}(粘贴备份内容一键恢复)${N}"
-  echo -e "  ${G}0.${N} 返回"
-  echo
-  read -r -p "  请选择 [0-2]: " mode </dev/tty
+  while true; do
+    _hk_card "安装模式选择"
+    echo -e "  ${G}1.${N} 全新安装  ${D}(逐字段输入 WireGuard 配置)${N}"
+    echo -e "  ${G}2.${N} 恢复模式  ${D}(粘贴备份内容一键恢复)${N}"
+    echo -e "  ${G}0.${N} 返回"
+    echo
+    local mode=""
+    _hk_read_raw mode "请选择 [0-2]" || return 1
 
-  case "${mode}" in
-    1)
-      _step_base_system
-      _step_collect_network
-      _input_wg_fresh
-      _step_setup_wireguard
-      _step_install_v2bx
-      _step_panel_ip_monitor
-      _step_optional_warp
-      _print_deploy_summary
-      ;;
-    2)
-      _step_base_system
-      # 恢复模式先粘贴，再采集（采集可能依赖粘贴中的 WAN_IF / GW）
-      _input_wg_restore
-      # 如果备份中有网络信息则直接用，否则重新采集
-      if [[ -z "${HK_WAN_IF}" || -z "${HK_GW}" || -z "${HK_PUB_IP}" ]]; then
-        _step_collect_network
-      else
-        mkdir -p "${HK_STATE_DIR}"
-        echo "${HK_WAN_IF}" > "${HK_STATE_DIR}/wan_if"
-        echo "${HK_GW}"     > "${HK_STATE_DIR}/gateway"
-        echo "${HK_PUB_IP}" > "${HK_STATE_DIR}/pub_ip"
-        _hk_ok "使用备份中的网络信息: ${HK_WAN_IF} / ${HK_GW} / ${HK_PUB_IP}"
-      fi
-      _step_setup_wireguard
-      _step_install_v2bx
-      _step_panel_ip_monitor
-      _step_optional_warp
-      _print_deploy_summary
-      ;;
-    0) return ;;
-    *) _hk_err "无效选项"; return 1 ;;
-  esac
+    case "${mode}" in
+      1)
+        hk_run_fresh
+        return 0
+        ;;
+      2)
+        hk_run_restore
+        return 0
+        ;;
+      0) return 0 ;;
+      *)
+        _hk_err "无效选项，请输入 0 / 1 / 2"
+        ;;
+    esac
+  done
 }
 
 hk_run_restore() {
@@ -857,10 +1080,17 @@ hk_run_restore() {
   [[ "${FLYTO_VERSION:-}" == "" ]] && _hk_banner
   _check_root
   _check_secrets
+  _hk_card "恢复模式" "将使用备份块恢复 WireGuard 与 V2bX 配置"
   _step_base_system
   _input_wg_restore
   if [[ -z "${HK_WAN_IF}" || -z "${HK_GW}" || -z "${HK_PUB_IP}" ]]; then
     _step_collect_network
+  else
+    mkdir -p "${HK_STATE_DIR}"
+    echo "${HK_WAN_IF}" > "${HK_STATE_DIR}/wan_if"
+    echo "${HK_GW}"     > "${HK_STATE_DIR}/gateway"
+    echo "${HK_PUB_IP}" > "${HK_STATE_DIR}/pub_ip"
+    _hk_ok "使用备份中的网络信息: ${HK_WAN_IF} / ${HK_GW} / ${HK_PUB_IP}"
   fi
   _step_setup_wireguard
   _step_install_v2bx

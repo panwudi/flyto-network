@@ -29,6 +29,25 @@ _ok()      { echo -e "${G}[WARP]${N} $*"; }
 _warn()    { echo -e "${Y}[WARP]${N} $*" >&2; }
 _err()     { echo -e "${R}[WARP]${N} $*" >&2; }
 
+_warp_card() {
+  local title="$1"
+  local subtitle="${2:-}"
+  echo
+  echo -e "  ${C}╔════════════════════════════════════════════════════════════╗${N}"
+  echo -e "  ${C}║${N} ${W}${title}${N}"
+  [[ -n "${subtitle}" ]] && echo -e "  ${C}║${N} ${D}${subtitle}${N}"
+  echo -e "  ${C}╚════════════════════════════════════════════════════════════╝${N}"
+}
+
+_warp_pause() {
+  local dummy=""
+  if ! read -r -p "  按回车继续..." dummy </dev/tty; then
+    echo
+    _warn "未检测到交互输入，跳过暂停"
+  fi
+  echo
+}
+
 # ── 运行时配置文件（端口唯一来源）──────────────────────────
 WARP_ENV_FILE="/etc/warp-google/env"
 WARP_PROXY_PORT="${WARP_PROXY_PORT:-40000}"
@@ -880,17 +899,33 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     --install|install) warp_do_install ;;
     status)  command -v warp >/dev/null 2>&1 && warp status  || echo "WARP 未安装" ;;
     test)    command -v warp >/dev/null 2>&1 && warp test    || echo "WARP 未安装" ;;
-    *)       _warp_banner
-             echo -e "  ${G}1.${N} 安装/升级 WARP"
-             echo -e "  ${G}2.${N} 查看状态"
-             echo -e "  ${G}3.${N} 逐层诊断"
-             echo -e "  ${G}0.${N} 退出"
-             read -r -p "  请选择 [0-3]: " c </dev/tty
-             case "${c}" in
-               1) warp_do_install ;;
-               2) command -v warp >/dev/null 2>&1 && warp status || echo "未安装" ;;
-               3) command -v warp >/dev/null 2>&1 && warp test   || echo "未安装" ;;
-               0) exit 0 ;;
-             esac ;;
+    *)
+      while true; do
+        _warp_banner
+        _warp_card "WARP 管理菜单" "Google / Gemini / OpenAI / Claude 相关流量路由"
+        echo -e "  ${G}1.${N} 安装 / 升级 WARP"
+        echo -e "  ${G}2.${N} 查看状态"
+        echo -e "  ${G}3.${N} 逐层诊断"
+        echo -e "  ${G}0.${N} 退出"
+        echo
+        read -r -p "  请选择 [0-3]: " c </dev/tty || exit 1
+        case "${c}" in
+          1)
+            warp_do_install
+            _warp_pause
+            ;;
+          2)
+            command -v warp >/dev/null 2>&1 && warp status || echo "未安装"
+            _warp_pause
+            ;;
+          3)
+            command -v warp >/dev/null 2>&1 && warp test || echo "未安装"
+            _warp_pause
+            ;;
+          0) exit 0 ;;
+          *) _warn "无效选项，请输入 0 / 1 / 2 / 3"; sleep 1 ;;
+        esac
+      done
+      ;;
   esac
 fi
