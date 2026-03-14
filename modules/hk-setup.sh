@@ -751,7 +751,10 @@ hk_run_backup() {
   pub_ip="$(curl -4 -s --max-time 8 https://ifconfig.io 2>/dev/null || true)"
 
   echo
-  echo -e "${Y}# ───────────────── WireGuard 备份信息 ─────────────────${N}"
+  echo -e "  ${Y}╔════════════════════════════════════════════════════════════╗${N}"
+  echo -e "  ${Y}║${N} ${W}备份复制区（请从 BEGIN 到 END 整块复制）${N}"
+  echo -e "  ${Y}╚════════════════════════════════════════════════════════════╝${N}"
+  echo "########## BEGIN FLYTO BACKUP ##########"
   echo "HK_PRIV_KEY=${priv}"
   echo "HK_PUB_KEY=${pub}"
   echo "HK_WG_ADDR=${addr}"
@@ -759,11 +762,10 @@ hk_run_backup() {
   echo "HK_WG_ENDPOINT=${endpoint}"
   echo "HK_WG_ALLOWED_IPS=0.0.0.0/0"
   echo "HK_WG_KEEPALIVE=25"
-  echo
-  echo -e "${Y}# ───────────────── 网络信息 ────────────────────────────${N}"
   echo "HK_WAN_IF=${wan_if}"
   echo "HK_GW=${gw}"
   echo "HK_PUB_IP=${pub_ip}"
+  echo "########### END FLYTO BACKUP ###########"
   echo
 
   _hk_warn "私钥（HK_PRIV_KEY）极度敏感，请保存在本地加密存储中"
