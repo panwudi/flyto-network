@@ -308,7 +308,7 @@ show_main_menu() {
         pause_screen "  按回车返回主菜单..."
         ;;
       5)
-        run_and_warn "清除解密缓存" clear_secrets_cache
+        run_and_warn "清除解密信息" clear_secrets_cache
         pause_screen "  按回车返回主菜单..."
         ;;
       0)

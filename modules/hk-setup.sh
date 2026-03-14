@@ -375,6 +375,7 @@ _input_wg_restore() {
     fi
 
     HK_PRIV_KEY="" HK_PUB_KEY="" HK_WG_ADDR="" US_PUB_KEY="" US_WG_ENDPOINT=""
+    HK_WAN_IF="" HK_GW="" HK_PUB_IP=""
     local parsed_keepalive="" parsed_node_id="" parsed_tun_ip=""
     local parsed_wan_if="" parsed_gw="" parsed_pub_ip=""
 
