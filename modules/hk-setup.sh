@@ -217,6 +217,62 @@ _hk_gate_after_step() {
   esac
 }
 
+_hk_progress_bar() {
+  local current="$1"
+  local total="$2"
+  local label="${3:-}"
+  local width=28
+  local percent=0
+  local filled=0
+  local bar=""
+  if [[ "${total}" -gt 0 ]]; then
+    percent=$(( current * 100 / total ))
+  fi
+  filled=$(( percent * width / 100 ))
+  bar="$(printf '%*s' "${filled}" '' | tr ' ' '#')"
+  bar="${bar}$(printf '%*s' "$((width - filled))" '' | tr ' ' '-')"
+  printf "\r  [%s] %3d%%  %s" "${bar}" "${percent}" "${label}"
+  if [[ "${current}" -ge "${total}" ]]; then
+    echo
+  fi
+}
+
+_hk_run_with_spinner() {
+  local desc="$1"
+  shift
+  local rc=0
+  local tmp_log=""
+  tmp_log="$(mktemp)"
+
+  if [[ -t 1 ]]; then
+    "$@" >"${tmp_log}" 2>&1 &
+    local pid=$!
+    local spin='|/-\'
+    local i=0
+    while kill -0 "${pid}" 2>/dev/null; do
+      i=$(( (i + 1) % 4 ))
+      printf "\r  %s %c" "${desc}" "${spin:${i}:1}"
+      sleep 0.15
+    done
+    wait "${pid}" || rc=$?
+    if [[ ${rc} -eq 0 ]]; then
+      printf "\r  %s ✓\n" "${desc}"
+    else
+      printf "\r  %s ✗\n" "${desc}"
+    fi
+  else
+    _hk_info "${desc}"
+    "$@" >"${tmp_log}" 2>&1 || rc=$?
+  fi
+
+  if [[ ${rc} -ne 0 ]]; then
+    _hk_warn "${desc}失败（exit=${rc}），最近日志如下："
+    sed -n '1,40p' "${tmp_log}" >&2
+  fi
+  rm -f "${tmp_log}"
+  return "${rc}"
+}
+
 _hk_mask_secret() {
   local v="${1:-}"
   local n="${#v}"
@@ -276,14 +332,22 @@ _step_base_system() {
 
   export DEBIAN_FRONTEND=noninteractive
   _hk_info "正在更新软件源（可能需要 1-3 分钟，请耐心等待）..."
-  apt-get update -y >/dev/null 2>&1 || true
+  _hk_info "进度提示：正在刷新软件源索引，请稍候..."
+  _hk_run_with_spinner "软件源更新中" apt-get update -y || true
 
-  _hk_info "正在安装依赖包（期间终端可能短暂无输出，属正常）..."
-  local pkgs="wireguard-tools nftables ipset curl ca-certificates dnsutils \
-              net-tools iptables iproute2 cron unzip openssl python3"
-  for p in ${pkgs}; do
-    _hk_info "安装依赖: ${p}"
-    apt-get install -y "${p}" >/dev/null 2>&1 || _hk_warn "跳过可选包: ${p}"
+  _hk_info "正在安装依赖包（已启用进度条）..."
+  local pkgs=(
+    wireguard-tools nftables ipset curl ca-certificates dnsutils
+    net-tools iptables iproute2 cron unzip openssl python3
+  )
+  local total="${#pkgs[@]}"
+  local idx=0
+  _hk_progress_bar 0 "${total}" "依赖安装准备中"
+  for p in "${pkgs[@]}"; do
+    idx=$((idx + 1))
+    _hk_info "安装依赖 (${idx}/${total}): ${p}"
+    _hk_run_with_spinner "安装 ${p}" apt-get install -y "${p}" || _hk_warn "跳过可选包: ${p}"
+    _hk_progress_bar "${idx}" "${total}" "依赖安装进度"
   done
   _hk_ok "依赖安装完成"
 
@@ -971,7 +1035,7 @@ _step_install_v2bx() {
 
   _hk_info "下载 V2bX 安装脚本..."
   local install_sh; install_sh="$(mktemp)"
-  curl -fsSL https://raw.githubusercontent.com/wyx2685/V2bX-script/master/install.sh \
+  curl -fL --progress-bar https://raw.githubusercontent.com/wyx2685/V2bX-script/master/install.sh \
     -o "${install_sh}" || { _hk_err "V2bX 安装脚本下载失败"; return 1; }
   chmod +x "${install_sh}"
 

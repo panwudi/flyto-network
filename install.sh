@@ -49,7 +49,7 @@ download_repo() {
   local src_dir="${TMP_DIR}/src"
 
   info "下载仓库压缩包: ${REPO_OWNER}/${REPO_NAME}@${REPO_REF}"
-  curl -fsSL "${ARCHIVE_URL}" -o "${archive}"
+  curl -fL --progress-bar "${ARCHIVE_URL}" -o "${archive}"
 
   mkdir -p "${src_dir}"
   tar -xzf "${archive}" -C "${src_dir}" --strip-components=1
