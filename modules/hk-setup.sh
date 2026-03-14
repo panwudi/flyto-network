@@ -75,6 +75,30 @@ _hk_is_ipv4_cidr() {
   [[ "${v}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$ ]]
 }
 
+_hk_guess_peer_tun_ip_from_local() {
+  local local_cidr="$(_hk_trim "${1:-}")"
+  _hk_is_ipv4_cidr "${local_cidr}" || return 1
+  python3 - "${local_cidr}" <<'PY' 2>/dev/null
+import ipaddress, sys
+
+cidr = sys.argv[1].strip()
+iface = ipaddress.ip_interface(cidr)
+net = iface.network
+local = iface.ip
+
+# /31,/32 无法可靠推断对端
+if net.prefixlen >= 31:
+    sys.exit(1)
+
+first = net.network_address + 1
+second = net.network_address + 2
+candidate = first if first != local else second
+if candidate == local:
+    sys.exit(1)
+print(f"{candidate}/32")
+PY
+}
+
 _hk_read_raw() {
   local __var_name="$1"
   local __label="$2"
@@ -691,6 +715,8 @@ EOF
   chmod 600 /etc/wireguard/wg0.conf
 
   # 保存面板 IP
+  mkdir -p "${HK_STATE_DIR}"
+  echo "${US_WG_TUN_IP}" > "${HK_STATE_DIR}/us_wg_tun_ip"
   if [[ -n "${PANEL_IP}" ]]; then
     echo "${PANEL_IP}" > "${HK_STATE_DIR}/panel_ip"
     # hosts
@@ -1286,15 +1312,35 @@ hk_run_backup() {
     if [[ -n "${wg_ns}" ]]; then
       us_tun_ip="$(
         ip netns exec "${wg_ns}" ip -4 route show dev "${wg_iface}" 2>/dev/null \
-          | awk '$1 ~ /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([0-9]|[1-2][0-9]|3[0-2])$/ && $1 != "0.0.0.0/0" {print $1; exit}' \
+          | awk '$1 ~ /^([0-9]{1,3}\.){3}[0-9]{1,3}\/32$/ {print $1; exit}' \
           | head -1 || true
       )"
     else
       us_tun_ip="$(
         ip -4 route show dev wg0 2>/dev/null \
-          | awk '$1 ~ /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([0-9]|[1-2][0-9]|3[0-2])$/ && $1 != "0.0.0.0/0" {print $1; exit}' \
+          | awk '$1 ~ /^([0-9]{1,3}\.){3}[0-9]{1,3}\/32$/ {print $1; exit}' \
           | head -1 || true
       )"
+    fi
+  fi
+
+  # 回退 1：历史状态（之前部署时保存）
+  if [[ -z "${us_tun_ip}" && -s "${HK_STATE_DIR}/us_wg_tun_ip" ]]; then
+    local saved_tun=""
+    saved_tun="$(_hk_trim "$(cat "${HK_STATE_DIR}/us_wg_tun_ip" 2>/dev/null || true)")"
+    if _hk_is_ipv4_cidr "${saved_tun}"; then
+      us_tun_ip="${saved_tun}"
+      _hk_info "US_WG_TUN_IP 来自历史状态: ${us_tun_ip}"
+    fi
+  fi
+
+  # 回退 2：依据本地隧道地址推断（例如本地 10.0.0.2/24 -> 对端 10.0.0.1/32）
+  if [[ -z "${us_tun_ip}" && -n "${addr}" ]]; then
+    local guessed_tun=""
+    guessed_tun="$(_hk_guess_peer_tun_ip_from_local "${addr}" || true)"
+    if _hk_is_ipv4_cidr "${guessed_tun}"; then
+      us_tun_ip="${guessed_tun}"
+      _hk_warn "未直接识别到 US_WG_TUN_IP，已按 ${addr} 推测为 ${us_tun_ip}（请核对）"
     fi
   fi
 
@@ -1346,6 +1392,7 @@ hk_run_backup() {
   fi
   if _hk_is_placeholder "${us_tun_ip}" || [[ "${us_tun_ip}" == "/32" ]]; then
     _hk_warn "未读取到 US_WG_TUN_IP，备份中写入占位值"
+    _hk_warn "已尝试来源：wg0.conf / wg showconf / 路由 / 历史状态缓存"
     _hk_warn "可手动执行以下命令确认后再填入恢复块："
     if [[ -n "${wg_ns}" ]]; then
       echo "    ip netns exec ${wg_ns} ip -4 route show dev ${wg_iface}"
