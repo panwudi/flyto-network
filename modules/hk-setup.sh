@@ -440,31 +440,12 @@ _input_wg_restore() {
       esac
     done <<< "${lines}"
 
-    local missing=()
-    _hk_is_placeholder "${HK_PRIV_KEY}" && missing+=("HK_PRIV_KEY")
-    _hk_is_placeholder "${HK_WG_ADDR}" && missing+=("HK_WG_ADDR")
-    _hk_is_placeholder "${US_PUB_KEY}" && missing+=("HK_WG_PEER_PUBKEY / US_PUB_KEY")
-    _hk_is_placeholder "${US_WG_ENDPOINT}" && missing+=("HK_WG_ENDPOINT")
+    _hk_warn "本次共识别到 ${parsed_count} 个字段"
 
-    if [[ ${#missing[@]} -gt 0 ]]; then
-      _hk_warn "本次共识别到 ${parsed_count} 个字段"
-      _hk_err "备份解析失败，缺少必填字段:"
-      for item in "${missing[@]}"; do
-        echo "    - ${item}"
-      done
-      echo
-      _hk_warn "可能原因：复制不完整、粘贴过早结束、包含不可见控制字符"
-      local action=""
-      while true; do
-        _hk_read_raw action "输入 r 重新粘贴 / q 返回上级菜单" "r" || return 1
-        action="${action,,}"
-        case "${action}" in
-          ""|r|retry) continue 2 ;;
-          q|quit|exit) return 1 ;;
-          *) _hk_warn "请输入 r 或 q" ;;
-        esac
-      done
-    fi
+    if _hk_is_placeholder "${HK_PRIV_KEY}"; then HK_PRIV_KEY=""; fi
+    if _hk_is_placeholder "${HK_WG_ADDR}"; then HK_WG_ADDR=""; fi
+    if _hk_is_placeholder "${US_PUB_KEY}"; then US_PUB_KEY=""; fi
+    if _hk_is_placeholder "${US_WG_ENDPOINT}"; then US_WG_ENDPOINT=""; fi
 
     [[ -n "${parsed_keepalive}" ]] && HK_WG_KEEPALIVE="${parsed_keepalive}"
     [[ -n "${parsed_tun_ip}" ]] && US_WG_TUN_IP="${parsed_tun_ip}"
@@ -481,6 +462,23 @@ _input_wg_restore() {
       US_WG_TUN_IP="10.0.0.1/32"
     fi
     _hk_is_placeholder "${V2BX_NODE_ID}" && V2BX_NODE_ID=""
+
+    if [[ -z "${HK_PRIV_KEY}" ]]; then
+      _hk_warn "HK_PRIV_KEY 为空或为占位值，请手动补全"
+      _hk_read_required HK_PRIV_KEY "香港节点 WG 私钥（PrivateKey）" || return 1
+    fi
+    if [[ -z "${HK_WG_ADDR}" ]]; then
+      _hk_warn "HK_WG_ADDR 为空或为占位值，请手动补全"
+      _hk_read_required HK_WG_ADDR "香港节点 WG 隧道地址（如 10.0.0.3/32）" || return 1
+    fi
+    if [[ -z "${US_PUB_KEY}" ]]; then
+      _hk_warn "HK_WG_PEER_PUBKEY 为空或为占位值，请手动补全"
+      _hk_read_required US_PUB_KEY "美国节点 WG 公钥（Peer PublicKey）" || return 1
+    fi
+    if [[ -z "${US_WG_ENDPOINT}" ]]; then
+      _hk_warn "HK_WG_ENDPOINT 为空或为占位值，请手动补全"
+      _hk_read_required US_WG_ENDPOINT "美国节点 WG Endpoint（IP:端口）" || return 1
+    fi
 
     _hk_read_required US_WG_TUN_IP "美国节点 WG 隧道 IP（如 10.0.0.1/32）" "${US_WG_TUN_IP}" || return 1
     _hk_read_required HK_WG_KEEPALIVE "WG PersistentKeepalive（秒）" "${HK_WG_KEEPALIVE}" || return 1
