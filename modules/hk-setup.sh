@@ -55,7 +55,11 @@ _hk_banner() {
 # 前置检查
 # ============================================================
 _check_root() {
-  [[ ${EUID:-0} -ne 0 ]] && { _hk_err "请以 root 运行"; exit 1; }
+  if [[ ${EUID:-0} -ne 0 ]]; then
+    _hk_err "请以 root 运行"
+    exit 1
+  fi
+  return 0
 }
 
 _check_secrets() {
