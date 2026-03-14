@@ -424,6 +424,11 @@ _input_wg_restore() {
       local v="${line#*=}"
       k="$(_hk_trim "${k}")"
       v="$(_hk_trim "${v}")"
+      k="${k#export }"
+      k="$(_hk_trim "${k}")"
+      if [[ "${v}" =~ ^\".*\"$ ]] || [[ "${v}" =~ ^\'.*\'$ ]]; then
+        v="${v:1:${#v}-2}"
+      fi
       [[ -z "${k}" ]] && continue
       case "${k}" in
         HK_PRIV_KEY)                    HK_PRIV_KEY="${v}"; parsed_count=$((parsed_count + 1)) ;;
@@ -440,12 +445,30 @@ _input_wg_restore() {
       esac
     done <<< "${lines}"
 
-    _hk_warn "本次共识别到 ${parsed_count} 个字段"
+    _hk_info "本次共识别到 ${parsed_count} 个字段"
+    echo "    已识别 NodeID  : ${parsed_node_id:-<空>}"
+    echo "    已识别 HK_WAN_IF: ${parsed_wan_if:-<空>}"
+    echo "    已识别 HK_GW    : ${parsed_gw:-<空>}"
+    echo "    已识别 HK_PUB_IP: ${parsed_pub_ip:-<空>}"
+    echo
 
-    if _hk_is_placeholder "${HK_PRIV_KEY}"; then HK_PRIV_KEY=""; fi
-    if _hk_is_placeholder "${HK_WG_ADDR}"; then HK_WG_ADDR=""; fi
-    if _hk_is_placeholder "${US_PUB_KEY}"; then US_PUB_KEY=""; fi
-    if _hk_is_placeholder "${US_WG_ENDPOINT}"; then US_WG_ENDPOINT=""; fi
+    local placeholder_fields=()
+    if _hk_is_placeholder "${HK_PRIV_KEY}"; then
+      HK_PRIV_KEY=""
+      placeholder_fields+=("HK_PRIV_KEY")
+    fi
+    if _hk_is_placeholder "${HK_WG_ADDR}"; then
+      HK_WG_ADDR=""
+      placeholder_fields+=("HK_WG_ADDR")
+    fi
+    if _hk_is_placeholder "${US_PUB_KEY}"; then
+      US_PUB_KEY=""
+      placeholder_fields+=("HK_WG_PEER_PUBKEY/US_PUB_KEY")
+    fi
+    if _hk_is_placeholder "${US_WG_ENDPOINT}"; then
+      US_WG_ENDPOINT=""
+      placeholder_fields+=("HK_WG_ENDPOINT")
+    fi
 
     [[ -n "${parsed_keepalive}" ]] && HK_WG_KEEPALIVE="${parsed_keepalive}"
     [[ -n "${parsed_tun_ip}" ]] && US_WG_TUN_IP="${parsed_tun_ip}"
@@ -462,6 +485,15 @@ _input_wg_restore() {
       US_WG_TUN_IP="10.0.0.1/32"
     fi
     _hk_is_placeholder "${V2BX_NODE_ID}" && V2BX_NODE_ID=""
+
+    if [[ ${#placeholder_fields[@]} -gt 0 ]]; then
+      _hk_warn "检测到占位值字段（不是未识别）:"
+      for f in "${placeholder_fields[@]}"; do
+        echo "    - ${f}"
+      done
+      _hk_warn "请手动补全真实值，或返回上一步重新生成完整备份块"
+      echo
+    fi
 
     if [[ -z "${HK_PRIV_KEY}" ]]; then
       _hk_warn "HK_PRIV_KEY 为空或为占位值，请手动补全"
@@ -831,6 +863,39 @@ _step_install_v2bx() {
   # 覆盖配置文件
   mkdir -p /etc/V2bX
 
+  cat > /etc/V2bX/config.json <<EOF
+{
+  "Log": {
+    "Level": "info",
+    "Output": ""
+  },
+  "Cores": [
+    {
+      "Type": "sing",
+      "Log": {
+        "Level": "info",
+        "Timestamp": true
+      },
+      "OriginalPath": "/etc/V2bX/sing_origin.json"
+    }
+  ],
+  "Nodes": [
+    {
+      "Core": "sing",
+      "ApiHost": "${PANEL_API_HOST}",
+      "ApiKey": "${PANEL_API_KEY}",
+      "NodeID": ${V2BX_NODE_ID},
+      "NodeType": "vless",
+      "Timeout": 30,
+      "ListenIP": "0.0.0.0",
+      "SendIP": "0.0.0.0",
+      "TCPFastOpen": true,
+      "SniffEnabled": true
+    }
+  ]
+}
+EOF
+
   cat > /etc/V2bX/config.yml <<EOF
 Log:
   Level: error
@@ -1008,27 +1073,69 @@ hk_run_backup() {
 
   local priv="" pub="" addr="" peer_pub="" endpoint="" us_tun_ip="" keepalive="" node_id=""
   local wan_if="" gw="" pub_ip=""
-  if [[ -f /etc/wireguard/wg0.conf ]]; then
+  local wg_conf="" wg_tmp=""
+
+  for p in /etc/wireguard/wg0.conf /usr/local/etc/wireguard/wg0.conf; do
+    if [[ -f "${p}" ]]; then
+      wg_conf="${p}"
+      break
+    fi
+  done
+
+  if [[ -z "${wg_conf}" ]] && command -v wg >/dev/null 2>&1; then
+    wg_tmp="$(mktemp)"
+    if wg showconf wg0 > "${wg_tmp}" 2>/dev/null; then
+      wg_conf="${wg_tmp}"
+      _hk_info "未找到本地 wg0.conf，已从运行中的 wg 接口导出配置用于备份"
+    else
+      rm -f "${wg_tmp}"
+      wg_tmp=""
+    fi
+  fi
+
+  if [[ -n "${wg_conf}" ]]; then
+    _hk_info "从 ${wg_conf} 提取 WireGuard 参数..."
     priv="$(
-      sed -nE 's/^[[:space:]]*PrivateKey[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' /etc/wireguard/wg0.conf | head -1
+      sed -nE 's/^[[:space:]]*PrivateKey[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "${wg_conf}" | head -1
     )"
     addr="$(
-      sed -nE 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' /etc/wireguard/wg0.conf | head -1
+      sed -nE 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "${wg_conf}" | head -1
     )"
     peer_pub="$(
-      sed -nE 's/^[[:space:]]*PublicKey[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' /etc/wireguard/wg0.conf | tail -1
+      sed -nE 's/^[[:space:]]*PublicKey[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "${wg_conf}" | tail -1
     )"
     endpoint="$(
-      sed -nE 's/^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' /etc/wireguard/wg0.conf | head -1
+      sed -nE 's/^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "${wg_conf}" | head -1
     )"
     keepalive="$(
-      sed -nE 's/^[[:space:]]*PersistentKeepalive[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' /etc/wireguard/wg0.conf | head -1
+      sed -nE 's/^[[:space:]]*PersistentKeepalive[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "${wg_conf}" | head -1
     )"
     us_tun_ip="$(
-      sed -nE 's/.*ip route replace[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+)[[:space:]]+dev[[:space:]]+wg0.*/\1/p' /etc/wireguard/wg0.conf | head -1
+      sed -nE 's/.*ip route replace[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+)[[:space:]]+dev[[:space:]]+wg0.*/\1/p' "${wg_conf}" | head -1
     )"
-    [[ -n "${priv}" ]] && pub="$(echo "${priv}" | wg pubkey 2>/dev/null || true)"
+  else
+    _hk_warn "未找到 wg0.conf，尝试从运行状态读取可用字段"
   fi
+
+  if [[ -z "${peer_pub}" ]] && command -v wg >/dev/null 2>&1; then
+    peer_pub="$(wg show wg0 peers 2>/dev/null | head -1 || true)"
+  fi
+  if [[ -z "${endpoint}" ]] && command -v wg >/dev/null 2>&1; then
+    endpoint="$(wg show wg0 endpoints 2>/dev/null | awk 'NR==1{print $2}' || true)"
+  fi
+  if [[ -z "${addr}" ]]; then
+    addr="$(ip -o -4 addr show dev wg0 scope global 2>/dev/null | awk 'NR==1{print $4}' || true)"
+  fi
+  if [[ -z "${us_tun_ip}" ]]; then
+    us_tun_ip="$(
+      ip -4 route show dev wg0 scope link 2>/dev/null \
+        | awk '!/proto kernel/ {print $1; exit}' \
+        | head -1 || true
+    )"
+  fi
+
+  [[ -n "${priv}" ]] && pub="$(echo "${priv}" | wg pubkey 2>/dev/null || true)"
+  [[ -n "${wg_tmp}" ]] && rm -f "${wg_tmp}"
   [[ -z "${keepalive}" ]] && keepalive="25"
   # 优先读取 config.json（当前主流），再回退 config.yml
   node_id="$(
