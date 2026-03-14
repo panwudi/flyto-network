@@ -105,12 +105,14 @@ _hk_read_raw() {
   local __default="${3-__HK_NO_DEFAULT__}"
   local __value=""
   if [[ "${__default}" == "__HK_NO_DEFAULT__" ]]; then
-    if ! read -r -p "  ${__label}: " __value </dev/tty; then
+    printf "  %s: " "${__label}" >/dev/tty
+    if ! read -r __value </dev/tty; then
       _hk_err "未检测到交互输入，请在终端直接运行脚本"
       return 1
     fi
   else
-    if ! read -r -p "  ${__label} [${__default}]: " __value </dev/tty; then
+    printf "  %s [%s]: " "${__label}" "${__default}" >/dev/tty
+    if ! read -r __value </dev/tty; then
       _hk_err "未检测到交互输入，请在终端直接运行脚本"
       return 1
     fi
@@ -158,13 +160,15 @@ _hk_confirm() {
   local ans=""
   while true; do
     if [[ "${default}" == "Y" ]]; then
-      if ! read -r -p "  ${prompt} [Y/n]: " ans </dev/tty; then
+      printf "  %s [Y/n]: " "${prompt}" >/dev/tty
+      if ! read -r ans </dev/tty; then
         _hk_err "未检测到交互输入，请在终端直接运行脚本"
         return 1
       fi
       [[ -z "${ans}" ]] && ans="Y"
     else
-      if ! read -r -p "  ${prompt} [y/N]: " ans </dev/tty; then
+      printf "  %s [y/N]: " "${prompt}" >/dev/tty
+      if ! read -r ans </dev/tty; then
         _hk_err "未检测到交互输入，请在终端直接运行脚本"
         return 1
       fi
@@ -182,7 +186,9 @@ _hk_step_nav() {
   local prompt="${1:-继续下一步？}"
   local ans=""
   while true; do
-    if ! read -r -p "  ${prompt} [Enter/y=继续, r=返回, q=退出]: " ans </dev/tty; then
+    echo "  选项: Enter/y=继续, r=返回, q=退出" >/dev/tty
+    printf "  %s: " "${prompt}" >/dev/tty
+    if ! read -r ans </dev/tty; then
       echo
       _hk_warn "未检测到交互输入，默认继续"
       return 0
@@ -492,10 +498,15 @@ _input_wg_fresh() {
     echo "    KEEPALIVE      = ${HK_WG_KEEPALIVE}"
     echo "    V2BX_NODE_ID   = ${V2BX_NODE_ID}"
     echo
-    if _hk_confirm "以上信息是否正确并继续部署？" "Y"; then
-      return 0
-    fi
-    _hk_info "将重新录入 WireGuard 参数"
+    echo "  你可以选择：继续部署 / 重新录入 / 退出脚本"
+    local next_action=0
+    _hk_step_nav "确认无误后继续部署？" || next_action=$?
+    case "${next_action}" in
+      0) return 0 ;;
+      2) _hk_info "将重新录入 WireGuard 参数" ;;
+      3) _hk_warn "按你的选择退出脚本"; exit 0 ;;
+      *) _hk_warn "输入异常，默认返回重新录入" ;;
+    esac
   done
 }
 
@@ -715,10 +726,15 @@ _input_wg_restore() {
       echo "    HK_PUB_IP      = ${HK_PUB_IP:-<空>}"
     fi
     echo
-    if _hk_confirm "以上信息是否正确并继续部署？" "Y"; then
-      return 0
-    fi
-    _hk_info "将重新进入恢复粘贴流程"
+    echo "  你可以选择：继续恢复 / 重新粘贴备份 / 退出脚本"
+    local next_action=0
+    _hk_step_nav "确认无误后继续恢复部署？" || next_action=$?
+    case "${next_action}" in
+      0) return 0 ;;
+      2) _hk_info "将重新进入恢复粘贴流程" ;;
+      3) _hk_warn "按你的选择退出脚本"; exit 0 ;;
+      *) _hk_warn "输入异常，默认返回重新粘贴" ;;
+    esac
   done
 }
 
@@ -1498,7 +1514,8 @@ hk_run_backup() {
   echo -e "  ${Y}请完整复制上方备份信息并确认保存后再继续。${N}"
   echo -e "  ${D}输入 y: 已保存并继续  |  n: 继续停留在此页面  |  q: 退出脚本${N}"
   while true; do
-    read -r -p "  请选择 [y/n/q]: " ans </dev/tty || {
+    printf "  请选择 [y/n/q]: " >/dev/tty
+    read -r ans </dev/tty || {
       _hk_err "未检测到交互输入，已中止备份流程"
       return 1
     }
