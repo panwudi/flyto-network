@@ -63,10 +63,16 @@ _hk_is_placeholder() {
   local u="${v^^}"
   [[ -z "${v}" ]] && return 0
   [[ "${u}" =~ ^REPLACE(_WITH_.*)?$ ]] && return 0
+  [[ "${u}" == "DEFAULT" ]] && return 0
   [[ "${u}" == "ENDPOINT" ]] && return 0
   [[ "${u}" == "<EMPTY>" ]] && return 0
   [[ "${u}" == "NULL" ]] && return 0
   return 1
+}
+
+_hk_is_ipv4_cidr() {
+  local v="$(_hk_trim "${1:-}")"
+  [[ "${v}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$ ]]
 }
 
 _hk_read_raw() {
@@ -446,10 +452,16 @@ _input_wg_restore() {
     done <<< "${lines}"
 
     _hk_info "本次共识别到 ${parsed_count} 个字段"
-    echo "    已识别 NodeID  : ${parsed_node_id:-<空>}"
-    echo "    已识别 HK_WAN_IF: ${parsed_wan_if:-<空>}"
-    echo "    已识别 HK_GW    : ${parsed_gw:-<空>}"
-    echo "    已识别 HK_PUB_IP: ${parsed_pub_ip:-<空>}"
+    echo "    HK_PRIV_KEY     : $(_hk_mask_secret "${HK_PRIV_KEY}")"
+    echo "    HK_WG_ADDR      : ${HK_WG_ADDR:-<空>}"
+    echo "    HK_WG_PEER_PUBKEY: ${US_PUB_KEY:-<空>}"
+    echo "    HK_WG_ENDPOINT  : ${US_WG_ENDPOINT:-<空>}"
+    echo "    US_WG_TUN_IP    : ${parsed_tun_ip:-<空>}"
+    echo "    HK_WG_KEEPALIVE : ${parsed_keepalive:-<空>}"
+    echo "    V2BX_NODE_ID    : ${parsed_node_id:-<空>}"
+    echo "    HK_WAN_IF       : ${parsed_wan_if:-<空>}"
+    echo "    HK_GW           : ${parsed_gw:-<空>}"
+    echo "    HK_PUB_IP       : ${parsed_pub_ip:-<空>}"
     echo
 
     local placeholder_fields=()
@@ -512,9 +524,24 @@ _input_wg_restore() {
       _hk_read_required US_WG_ENDPOINT "美国节点 WG Endpoint（IP:端口）" || return 1
     fi
 
-    _hk_read_required US_WG_TUN_IP "美国节点 WG 隧道 IP（如 10.0.0.1/32）" "${US_WG_TUN_IP}" || return 1
-    _hk_read_required HK_WG_KEEPALIVE "WG PersistentKeepalive（秒）" "${HK_WG_KEEPALIVE}" || return 1
-    _hk_read_node_id "${V2BX_NODE_ID:-}" || return 1
+    if ! _hk_is_ipv4_cidr "${US_WG_TUN_IP}"; then
+      _hk_warn "US_WG_TUN_IP 非法（当前: ${US_WG_TUN_IP:-<空>}），请手动输入合法 CIDR"
+      while true; do
+        _hk_read_required US_WG_TUN_IP "美国节点 WG 隧道 IP（如 10.0.0.1/32）" "${US_WG_TUN_IP:-10.0.0.1/32}" || return 1
+        _hk_is_ipv4_cidr "${US_WG_TUN_IP}" && break
+        _hk_warn "格式错误，请输入如 10.0.0.1/32"
+      done
+    fi
+
+    if [[ ! "${HK_WG_KEEPALIVE}" =~ ^[0-9]+$ ]]; then
+      _hk_warn "HK_WG_KEEPALIVE 非数字（当前: ${HK_WG_KEEPALIVE:-<空>}），请手动输入"
+      _hk_read_required HK_WG_KEEPALIVE "WG PersistentKeepalive（秒）" "25" || return 1
+    fi
+
+    if [[ ! "${V2BX_NODE_ID}" =~ ^[0-9]+$ ]]; then
+      _hk_warn "V2BX_NODE_ID 非数字（当前: ${V2BX_NODE_ID:-<空>}），请手动输入"
+      _hk_read_node_id "${V2BX_NODE_ID:-}" || return 1
+    fi
 
     _hk_card "恢复参数确认"
     echo "    HK_PRIV_KEY    = $(_hk_mask_secret "${HK_PRIV_KEY}")"
