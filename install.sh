@@ -82,20 +82,9 @@ main() {
     exit 0
   fi
 
-  info "安装完成。"
-
-  # 只有在真正交互终端中才尝试自动进入菜单，避免 curl | bash 场景下静默退出。
-  if [[ -t 0 && -t 1 && -t 2 && -r /dev/tty && -w /dev/tty ]]; then
-    info "检测到交互终端，正在启动 FLYTOex Network..."
-    if bash "${INSTALL_DIR}/flyto.sh" "$@" </dev/tty >/dev/tty 2>&1; then
-      exit 0
-    fi
-    warn "自动启动未成功，请手动执行: bash ${INSTALL_DIR}/flyto.sh"
-    exit 0
-  fi
-
-  warn "当前会话不是交互终端，已完成安装但不会自动进入菜单。"
-  warn "下一步请执行: bash ${INSTALL_DIR}/flyto.sh"
+  info "安装完成，进入 ${INSTALL_DIR} 并启动主脚本..."
+  cd "${INSTALL_DIR}"
+  exec bash "./flyto.sh" "$@"
 }
 
 main "$@"
