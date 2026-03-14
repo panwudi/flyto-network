@@ -1073,19 +1073,61 @@ hk_run_backup() {
 
   local priv="" pub="" addr="" peer_pub="" endpoint="" us_tun_ip="" keepalive="" node_id=""
   local wan_if="" gw="" pub_ip=""
-  local wg_conf="" wg_tmp=""
+  local wg_conf="" wg_tmp="" wg_source=""
+  local wg_ns="" wg_iface="wg0"
 
-  for p in /etc/wireguard/wg0.conf /usr/local/etc/wireguard/wg0.conf; do
-    if [[ -f "${p}" ]]; then
-      wg_conf="${p}"
-      break
+  # 优先探测 netns 场景（例如 V2bX/sing-box 把 wg 放在 sb-ns）
+  if command -v ip >/dev/null 2>&1 && command -v wg >/dev/null 2>&1; then
+    if ip netns list 2>/dev/null | awk '{print $1}' | grep -qx "sb-ns"; then
+      local sb_ifaces=""
+      sb_ifaces="$(ip netns exec sb-ns wg show interfaces 2>/dev/null || true)"
+      if [[ -n "${sb_ifaces//[[:space:]]/}" ]]; then
+        wg_ns="sb-ns"
+        wg_iface="$(awk '{print $1}' <<< "${sb_ifaces}")"
+      fi
     fi
-  done
+
+    if [[ -z "${wg_ns}" ]]; then
+      local ns="" ns_ifaces=""
+      while IFS= read -r ns; do
+        [[ -z "${ns}" ]] && continue
+        ns_ifaces="$(ip netns exec "${ns}" wg show interfaces 2>/dev/null || true)"
+        if [[ -n "${ns_ifaces//[[:space:]]/}" ]]; then
+          wg_ns="${ns}"
+          wg_iface="$(awk '{print $1}' <<< "${ns_ifaces}")"
+          break
+        fi
+      done < <(ip netns list 2>/dev/null | awk '{print $1}')
+    fi
+  fi
+
+  if [[ -n "${wg_ns}" ]]; then
+    wg_tmp="$(mktemp)"
+    if ip netns exec "${wg_ns}" wg showconf "${wg_iface}" > "${wg_tmp}" 2>/dev/null; then
+      wg_conf="${wg_tmp}"
+      wg_source="netns ${wg_ns}/${wg_iface}"
+      _hk_info "检测到 WireGuard 运行在 ${wg_source}，将从该命名空间提取备份"
+    else
+      rm -f "${wg_tmp}"
+      wg_tmp=""
+    fi
+  fi
+
+  if [[ -z "${wg_conf}" ]]; then
+    for p in /etc/wireguard/wg0.conf /usr/local/etc/wireguard/wg0.conf; do
+      if [[ -f "${p}" ]]; then
+        wg_conf="${p}"
+        wg_source="${p}"
+        break
+      fi
+    done
+  fi
 
   if [[ -z "${wg_conf}" ]] && command -v wg >/dev/null 2>&1; then
     wg_tmp="$(mktemp)"
     if wg showconf wg0 > "${wg_tmp}" 2>/dev/null; then
       wg_conf="${wg_tmp}"
+      wg_source="root namespace wg0(runtime)"
       _hk_info "未找到本地 wg0.conf，已从运行中的 wg 接口导出配置用于备份"
     else
       rm -f "${wg_tmp}"
@@ -1094,7 +1136,7 @@ hk_run_backup() {
   fi
 
   if [[ -n "${wg_conf}" ]]; then
-    _hk_info "从 ${wg_conf} 提取 WireGuard 参数..."
+    _hk_info "从 ${wg_source:-${wg_conf}} 提取 WireGuard 参数..."
     priv="$(
       sed -nE 's/^[[:space:]]*PrivateKey[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "${wg_conf}" | head -1
     )"
@@ -1118,24 +1160,54 @@ hk_run_backup() {
   fi
 
   if [[ -z "${peer_pub}" ]] && command -v wg >/dev/null 2>&1; then
-    peer_pub="$(wg show wg0 peers 2>/dev/null | head -1 || true)"
+    if [[ -n "${wg_ns}" ]]; then
+      peer_pub="$(ip netns exec "${wg_ns}" wg show "${wg_iface}" peers 2>/dev/null | head -1 || true)"
+    else
+      peer_pub="$(wg show wg0 peers 2>/dev/null | head -1 || true)"
+    fi
   fi
   if [[ -z "${endpoint}" ]] && command -v wg >/dev/null 2>&1; then
-    endpoint="$(wg show wg0 endpoints 2>/dev/null | awk 'NR==1{print $2}' || true)"
+    if [[ -n "${wg_ns}" ]]; then
+      endpoint="$(ip netns exec "${wg_ns}" wg show "${wg_iface}" endpoints 2>/dev/null | awk 'NR==1{print $2}' || true)"
+    else
+      endpoint="$(wg show wg0 endpoints 2>/dev/null | awk 'NR==1{print $2}' || true)"
+    fi
+  fi
+  if [[ -z "${keepalive}" ]] && command -v wg >/dev/null 2>&1; then
+    if [[ -n "${wg_ns}" ]]; then
+      keepalive="$(ip netns exec "${wg_ns}" wg show "${wg_iface}" dump 2>/dev/null | awk 'NR==2{print $9}' || true)"
+    else
+      keepalive="$(wg show wg0 dump 2>/dev/null | awk 'NR==2{print $9}' || true)"
+    fi
   fi
   if [[ -z "${addr}" ]]; then
-    addr="$(ip -o -4 addr show dev wg0 scope global 2>/dev/null | awk 'NR==1{print $4}' || true)"
+    if [[ -n "${wg_ns}" ]]; then
+      addr="$(ip netns exec "${wg_ns}" ip -o -4 addr show dev "${wg_iface}" scope global 2>/dev/null | awk 'NR==1{print $4}' || true)"
+    else
+      addr="$(ip -o -4 addr show dev wg0 scope global 2>/dev/null | awk 'NR==1{print $4}' || true)"
+    fi
   fi
   if [[ -z "${us_tun_ip}" ]]; then
-    us_tun_ip="$(
-      ip -4 route show dev wg0 scope link 2>/dev/null \
-        | awk '!/proto kernel/ {print $1; exit}' \
-        | head -1 || true
-    )"
+    if [[ -n "${wg_ns}" ]]; then
+      us_tun_ip="$(
+        ip netns exec "${wg_ns}" ip -4 route show dev "${wg_iface}" scope link 2>/dev/null \
+          | awk '!/proto kernel/ {print $1; exit}' \
+          | head -1 || true
+      )"
+    else
+      us_tun_ip="$(
+        ip -4 route show dev wg0 scope link 2>/dev/null \
+          | awk '!/proto kernel/ {print $1; exit}' \
+          | head -1 || true
+      )"
+    fi
   fi
 
   [[ -n "${priv}" ]] && pub="$(echo "${priv}" | wg pubkey 2>/dev/null || true)"
   [[ -n "${wg_tmp}" ]] && rm -f "${wg_tmp}"
+  if [[ ! "${keepalive}" =~ ^[0-9]+$ ]]; then
+    keepalive="25"
+  fi
   [[ -z "${keepalive}" ]] && keepalive="25"
   # 优先读取 config.json（当前主流），再回退 config.yml
   node_id="$(
@@ -1162,23 +1234,23 @@ hk_run_backup() {
   fi
 
   if _hk_is_placeholder "${priv}"; then
-    _hk_warn "未从 wg0.conf 读取到 HK_PRIV_KEY，备份中写入占位值"
+    _hk_warn "未读取到 HK_PRIV_KEY，备份中写入占位值"
     priv="REPLACE_WITH_HK_PRIV_KEY"
   fi
   if _hk_is_placeholder "${addr}"; then
-    _hk_warn "未从 wg0.conf 读取到 HK_WG_ADDR，备份中写入占位值"
+    _hk_warn "未读取到 HK_WG_ADDR，备份中写入占位值"
     addr="REPLACE_WITH_HK_WG_ADDR"
   fi
   if _hk_is_placeholder "${peer_pub}"; then
-    _hk_warn "未从 wg0.conf 读取到 HK_WG_PEER_PUBKEY，备份中写入占位值"
+    _hk_warn "未读取到 HK_WG_PEER_PUBKEY，备份中写入占位值"
     peer_pub="REPLACE_WITH_HK_WG_PEER_PUBKEY"
   fi
   if _hk_is_placeholder "${endpoint}"; then
-    _hk_warn "未从 wg0.conf 读取到 HK_WG_ENDPOINT，备份中写入占位值"
+    _hk_warn "未读取到 HK_WG_ENDPOINT，备份中写入占位值"
     endpoint="REPLACE_WITH_HK_WG_ENDPOINT"
   fi
   if _hk_is_placeholder "${us_tun_ip}" || [[ "${us_tun_ip}" == "/32" ]]; then
-    _hk_warn "未从 wg0.conf 读取到 US_WG_TUN_IP，备份中写入占位值"
+    _hk_warn "未读取到 US_WG_TUN_IP，备份中写入占位值"
     us_tun_ip="REPLACE_WITH_US_WG_TUN_IP"
   fi
 
