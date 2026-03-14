@@ -1,0 +1,125 @@
+<svg viewBox="0 0 760 480" xmlns="http://www.w3.org/2000/svg" font-family="'Helvetica Neue', Arial, sans-serif">
+  <!-- 透明背景 -->
+
+  <!-- ── 样式 ── -->
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#555"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#E8660A"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2563EB"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#00000025"/>
+    </filter>
+  </defs>
+
+  <!-- ══════════════════════════════════════════════════════════
+       节点定义
+       客户端 → 香港节点 → 美国出口 → 目标
+       ══════════════════════════════════════════════════════════ -->
+
+  <!-- 客户端 -->
+  <g filter="url(#shadow)">
+    <rect x="30" y="190" width="130" height="60" rx="10" fill="#1E3A5F" stroke="#2563EB" stroke-width="1.5"/>
+    <text x="95" y="216" text-anchor="middle" fill="#93C5FD" font-size="11" font-weight="600">客户端</text>
+    <text x="95" y="232" text-anchor="middle" fill="#60A5FA" font-size="10">任意设备</text>
+    <text x="95" y="246" text-anchor="middle" fill="#93C5FD" font-size="10">VLESS + REALITY</text>
+  </g>
+
+  <!-- 香港节点（中心，最大） -->
+  <g filter="url(#shadow)">
+    <rect x="240" y="140" width="200" height="160" rx="12" fill="#1A2E1A" stroke="#16A34A" stroke-width="2"/>
+    <text x="340" y="165" text-anchor="middle" fill="#86EFAC" font-size="12" font-weight="700">香港中转节点</text>
+    <!-- eth0 -->
+    <rect x="258" y="178" width="72" height="32" rx="6" fill="#0F2A0F" stroke="#4ADE80" stroke-width="1"/>
+    <text x="294" y="193" text-anchor="middle" fill="#4ADE80" font-size="10" font-weight="600">eth0</text>
+    <text x="294" y="205" text-anchor="middle" fill="#86EFAC" font-size="9">客户端入站</text>
+    <!-- wg0 -->
+    <rect x="350" y="178" width="72" height="32" rx="6" fill="#0F2A0F" stroke="#22D3EE" stroke-width="1"/>
+    <text x="386" y="193" text-anchor="middle" fill="#22D3EE" font-size="10" font-weight="600">wg0</text>
+    <text x="386" y="205" text-anchor="middle" fill="#86EFAC" font-size="9">代理出站</text>
+    <!-- source-based routing -->
+    <rect x="258" y="222" width="164" height="28" rx="6" fill="#0D1F0D" stroke="#15803D" stroke-width="1" stroke-dasharray="4,2"/>
+    <text x="340" y="234" text-anchor="middle" fill="#86EFAC" font-size="9">source-based policy routing</text>
+    <text x="340" y="245" text-anchor="middle" fill="#4ADE80" font-size="9">回包走 eth0 · 出站走 wg0</text>
+    <!-- V2bX -->
+    <rect x="258" y="262" width="74" height="26" rx="6" fill="#0A1A2E" stroke="#3B82F6" stroke-width="1"/>
+    <text x="295" y="278" text-anchor="middle" fill="#93C5FD" font-size="10">V2bX / sing-box</text>
+    <!-- WARP (可选) -->
+    <rect x="348" y="262" width="74" height="26" rx="6" fill="#1C1008" stroke="#F97316" stroke-width="1" stroke-dasharray="3,2"/>
+    <text x="385" y="278" text-anchor="middle" fill="#FCA96A" font-size="10">WARP (可选)</text>
+  </g>
+
+  <!-- 美国出口节点 -->
+  <g filter="url(#shadow)">
+    <rect x="540" y="155" width="140" height="90" rx="10" fill="#1A1A2E" stroke="#7C3AED" stroke-width="1.5"/>
+    <text x="610" y="181" text-anchor="middle" fill="#C4B5FD" font-size="12" font-weight="600">美国出口节点</text>
+    <text x="610" y="197" text-anchor="middle" fill="#A78BFA" font-size="10">WireGuard 对端</text>
+    <rect x="558" y="208" width="104" height="24" rx="5" fill="#0F0F1E" stroke="#6D28D9" stroke-width="1"/>
+    <text x="610" y="223" text-anchor="middle" fill="#A78BFA" font-size="10">NAT MASQUERADE</text>
+  </g>
+
+  <!-- 目标服务 -->
+  <g filter="url(#shadow)">
+    <rect x="560" y="330" width="140" height="60" rx="10" fill="#1A2208" stroke="#65A30D" stroke-width="1.5"/>
+    <text x="630" y="356" text-anchor="middle" fill="#BEF264" font-size="11" font-weight="600">目标服务</text>
+    <text x="630" y="372" text-anchor="middle" fill="#A3E635" font-size="10">Google / Gemini / 其他</text>
+  </g>
+
+  <!-- ══════════════════════════════════════════════════════════
+       连接线
+       ══════════════════════════════════════════════════════════ -->
+
+  <!-- 客户端 → 香港节点 eth0 -->
+  <line x1="160" y1="220" x2="238" y2="220" stroke="#2563EB" stroke-width="2"
+        stroke-dasharray="6,3" marker-end="url(#arrow-blue)"/>
+  <text x="198" y="213" text-anchor="middle" fill="#60A5FA" font-size="9">VLESS+REALITY</text>
+
+  <!-- 香港节点 wg0 → 美国节点 -->
+  <line x1="440" y1="200" x2="539" y2="200" stroke="#7C3AED" stroke-width="2"
+        marker-end="url(#arrow)"/>
+  <text x="490" y="193" text-anchor="middle" fill="#A78BFA" font-size="9">WireGuard</text>
+  <text x="490" y="205" text-anchor="middle" fill="#7C3AED" font-size="9">tunnel</text>
+
+  <!-- 美国节点 → 目标服务 -->
+  <line x1="610" y1="245" x2="610" y2="329" stroke="#65A30D" stroke-width="2"
+        marker-end="url(#arrow)"/>
+  <text x="625" y="290" fill="#A3E635" font-size="9">NAT</text>
+
+  <!-- 回包路径（虚线） -->
+  <path d="M 240 235 C 130 235 130 260 95 260 C 95 260 95 250 95 250" stroke="#6B7280" stroke-width="1.5"
+        stroke-dasharray="4,3" fill="none" marker-end="url(#arrow)"/>
+  <text x="160" y="280" text-anchor="middle" fill="#9CA3AF" font-size="9">回包原路返回</text>
+  <text x="160" y="291" text-anchor="middle" fill="#9CA3AF" font-size="9">via eth0</text>
+
+  <!-- ══════════════════════════════════════════════════════════
+       说明区域
+       ══════════════════════════════════════════════════════════ -->
+
+  <!-- 图例 -->
+  <g>
+    <rect x="30" y="380" width="280" height="90" rx="8" fill="#111827" stroke="#374151" stroke-width="1"/>
+    <text x="45" y="400" fill="#D1D5DB" font-size="10" font-weight="600">流量说明</text>
+    <!-- 入站回包 -->
+    <line x1="45" y1="416" x2="75" y2="416" stroke="#6B7280" stroke-width="1.5" stroke-dasharray="4,2"/>
+    <text x="82" y="420" fill="#9CA3AF" font-size="10">入站回包（eth0，源 IP 策略路由）</text>
+    <!-- 代理出站 -->
+    <line x1="45" y1="433" x2="75" y2="433" stroke="#7C3AED" stroke-width="2"/>
+    <polygon points="75,430 82,433 75,436" fill="#7C3AED"/>
+    <text x="88" y="437" fill="#A78BFA" font-size="10">代理出站（wg0 → 美国）</text>
+    <!-- WARP -->
+    <line x1="45" y1="450" x2="75" y2="450" stroke="#F97316" stroke-width="1.5" stroke-dasharray="3,2"/>
+    <text x="82" y="454" fill="#FCA96A" font-size="10">WARP 透明代理（可选，Google/Gemini 专用）</text>
+    <!-- 客户端入站 -->
+    <line x1="45" y1="467" x2="75" y2="467" stroke="#2563EB" stroke-width="2" stroke-dasharray="6,3"/>
+    <polygon points="75,464 82,467 75,470" fill="#2563EB"/>
+    <text x="88" y="471" fill="#60A5FA" font-size="10">客户端入站（VLESS + REALITY）</text>
+  </g>
+
+  <!-- FLYTOex 水印 -->
+  <text x="750" y="475" text-anchor="end" fill="#374151" font-size="10">www.flytoex.com</text>
+</svg>
