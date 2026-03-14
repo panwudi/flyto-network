@@ -419,6 +419,7 @@ _input_wg_restore() {
     local parsed_keepalive="" parsed_node_id="" parsed_tun_ip=""
     local parsed_wan_if="" parsed_gw="" parsed_pub_ip=""
     local parsed_count=0
+    local has_keepalive=0 has_tun_ip=0 has_node_id=0
 
     while IFS= read -r line; do
       line="${line%$'\r'}"
@@ -442,12 +443,12 @@ _input_wg_restore() {
         HK_WG_ADDR)                     HK_WG_ADDR="${v}"; parsed_count=$((parsed_count + 1)) ;;
         HK_WG_PEER_PUBKEY|US_PUB_KEY)   US_PUB_KEY="${v}"; parsed_count=$((parsed_count + 1)) ;;
         HK_WG_ENDPOINT)                 US_WG_ENDPOINT="${v}"; parsed_count=$((parsed_count + 1)) ;;
-        HK_WG_KEEPALIVE)                parsed_keepalive="${v}"; parsed_count=$((parsed_count + 1)) ;;
-        US_WG_TUN_IP|US_WG_ADDR)        parsed_tun_ip="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        HK_WG_KEEPALIVE)                parsed_keepalive="${v}"; has_keepalive=1; parsed_count=$((parsed_count + 1)) ;;
+        US_WG_TUN_IP|US_WG_ADDR)        parsed_tun_ip="${v}"; has_tun_ip=1; parsed_count=$((parsed_count + 1)) ;;
         HK_WAN_IF)                      parsed_wan_if="${v}"; parsed_count=$((parsed_count + 1)) ;;
         HK_GW)                          parsed_gw="${v}"; parsed_count=$((parsed_count + 1)) ;;
         HK_PUB_IP)                      parsed_pub_ip="${v}"; parsed_count=$((parsed_count + 1)) ;;
-        V2BX_NODE_ID|NODE_ID)           parsed_node_id="${v}"; parsed_count=$((parsed_count + 1)) ;;
+        V2BX_NODE_ID|NODE_ID)           parsed_node_id="${v}"; has_node_id=1; parsed_count=$((parsed_count + 1)) ;;
       esac
     done <<< "${lines}"
 
@@ -494,7 +495,7 @@ _input_wg_restore() {
       HK_WG_KEEPALIVE="25"
     fi
     if _hk_is_placeholder "${US_WG_TUN_IP}" || [[ "${US_WG_TUN_IP}" == "/32" ]]; then
-      US_WG_TUN_IP="10.0.0.1/32"
+      US_WG_TUN_IP=""
     fi
     _hk_is_placeholder "${V2BX_NODE_ID}" && V2BX_NODE_ID=""
 
@@ -524,8 +525,36 @@ _input_wg_restore() {
       _hk_read_required US_WG_ENDPOINT "美国节点 WG Endpoint（IP:端口）" || return 1
     fi
 
-    if ! _hk_is_ipv4_cidr "${US_WG_TUN_IP}"; then
-      _hk_warn "US_WG_TUN_IP 非法（当前: ${US_WG_TUN_IP:-<空>}），请手动输入合法 CIDR"
+    local manual_fields=()
+    local need_tun_input=0 need_keepalive_input=0 need_nodeid_input=0
+    if [[ ${has_tun_ip} -eq 0 ]]; then
+      need_tun_input=1
+      manual_fields+=("US_WG_TUN_IP（缺失）")
+    elif ! _hk_is_ipv4_cidr "${US_WG_TUN_IP}"; then
+      need_tun_input=1
+      manual_fields+=("US_WG_TUN_IP（格式非法: ${US_WG_TUN_IP:-<空>}）")
+    fi
+    if [[ ${has_keepalive} -eq 0 ]]; then
+      _hk_warn "未提供 HK_WG_KEEPALIVE，已使用默认值 25"
+    elif [[ ! "${HK_WG_KEEPALIVE}" =~ ^[0-9]+$ ]]; then
+      need_keepalive_input=1
+      manual_fields+=("HK_WG_KEEPALIVE（非数字）")
+    fi
+    if [[ ${has_node_id} -eq 0 ]] || [[ ! "${V2BX_NODE_ID}" =~ ^[0-9]+$ ]]; then
+      need_nodeid_input=1
+      manual_fields+=("V2BX_NODE_ID（缺失或非数字）")
+    fi
+
+    if [[ ${#manual_fields[@]} -gt 0 ]]; then
+      _hk_warn "以下字段缺失或无效，下面将逐项提示输入（不是卡住）:"
+      for f in "${manual_fields[@]}"; do
+        echo "    - ${f}"
+      done
+      echo
+    fi
+
+    if [[ ${need_tun_input} -eq 1 ]]; then
+      _hk_warn "US_WG_TUN_IP 需要手动确认（示例: 10.0.0.1/32）"
       while true; do
         _hk_read_required US_WG_TUN_IP "美国节点 WG 隧道 IP（如 10.0.0.1/32）" "${US_WG_TUN_IP:-10.0.0.1/32}" || return 1
         _hk_is_ipv4_cidr "${US_WG_TUN_IP}" && break
@@ -533,12 +562,12 @@ _input_wg_restore() {
       done
     fi
 
-    if [[ ! "${HK_WG_KEEPALIVE}" =~ ^[0-9]+$ ]]; then
+    if [[ ${need_keepalive_input} -eq 1 ]]; then
       _hk_warn "HK_WG_KEEPALIVE 非数字（当前: ${HK_WG_KEEPALIVE:-<空>}），请手动输入"
       _hk_read_required HK_WG_KEEPALIVE "WG PersistentKeepalive（秒）" "25" || return 1
     fi
 
-    if [[ ! "${V2BX_NODE_ID}" =~ ^[0-9]+$ ]]; then
+    if [[ ${need_nodeid_input} -eq 1 ]]; then
       _hk_warn "V2BX_NODE_ID 非数字（当前: ${V2BX_NODE_ID:-<空>}），请手动输入"
       _hk_read_node_id "${V2BX_NODE_ID:-}" || return 1
     fi
