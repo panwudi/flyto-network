@@ -737,7 +737,7 @@ case "\${1:-}" in
     echo
     _gok=0
     echo "  正在检测 Google 连通性（最多 6 秒）..."
-    _gcode="\$(curl -s --max-time 6 -o /dev/null -w "%{http_code}" https://www.google.com 2>/dev/null || echo 000)"
+    _gcode="\$(curl -s --max-time 6 -o /dev/null -w '%{http_code}' https://www.google.com 2>/dev/null || echo 000)"
     [[ "\${_gcode}" == "200" ]] && _gok=1
     if [[ \$_gok -eq 1 ]]; then
       echo -e "\${G}╔══════════════════════════════════════╗\${N}"
@@ -885,8 +885,13 @@ case "\${1:-}" in
         ubuntu|debian) apt-get remove -y cloudflare-warp 2>/dev/null || true
           rm -f /etc/apt/sources.list.d/cloudflare-client.list \
                 /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg ;;
-        *) (command -v dnf && dnf || yum) remove -y cloudflare-warp 2>/dev/null || true
-           rm -f /etc/yum.repos.d/cloudflare-warp.repo ;;
+        *)
+          if command -v dnf >/dev/null 2>&1; then
+            dnf remove -y cloudflare-warp 2>/dev/null || true
+          else
+            yum remove -y cloudflare-warp 2>/dev/null || true
+          fi
+          rm -f /etc/yum.repos.d/cloudflare-warp.repo ;;
       esac
     fi
     rm -f /usr/local/bin/warp
