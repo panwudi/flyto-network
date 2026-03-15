@@ -190,6 +190,25 @@ sudo bash modules/warp.sh
 | `warp update` | 更新 Google IP 段 |
 | `warp uninstall` | 完整卸载 |
 
+#### 一键验收脚本（推荐）
+
+脚本会同时验证：
+
+- Google / Gemini 是否命中 `WARP_GOOGLE` 透明分流
+- OpenAI / Claude 域名规则是否写入 `sing_origin.json`
+- OpenAI / Claude 经 WARP SOCKS5 是否可达
+- 直连出口 IP 与 WARP 出口 IP 是否区分、`warp=on` 是否成立
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/panwudi/flyto-network/main/scripts/warp-verify.sh)
+```
+
+也可本地运行：
+
+```bash
+sudo bash scripts/warp-verify.sh
+```
+
 #### 端口配置
 
 所有端口从 `/etc/warp-google/env` 读取，安装时自动生成，不再写死：

@@ -9,6 +9,7 @@ FILES=(
   "flyto.sh"
   "modules/hk-setup.sh"
   "modules/warp.sh"
+  "scripts/warp-verify.sh"
   "tools/gen-secrets.sh"
 )
 
