@@ -762,28 +762,21 @@ Address = ${HK_WG_ADDR}
 DNS = 8.8.8.8
 Table = off
 
-PostUp = \\
-  # 注册 eth0rt 路由表 (100) \\
-  grep -q '^100 eth0rt' /etc/iproute2/rt_tables || echo '100 eth0rt' >> /etc/iproute2/rt_tables; \\
-  # eth0rt 默认路由 \\
-  ip route replace default via ${HK_GW} dev ${HK_WAN_IF} table eth0rt; \\
-  # 源 IP 策略路由（回包走 eth0）\\
-  ip rule del pref 100 from ${HK_PUB_IP}/32 lookup eth0rt 2>/dev/null || true; \\
-  ip rule add pref 100 from ${HK_PUB_IP}/32 lookup eth0rt; \\
-  # WG Endpoint 走 eth0（不能走 wg0 自环）\\
-  ip route replace ${US_PUB_IP}/32 via ${HK_GW} dev ${HK_WAN_IF}; \\
-  $([ -n "${PANEL_IP}" ] && echo "ip route replace ${PANEL_IP}/32 via ${HK_GW} dev ${HK_WAN_IF}; \\" || true)
-  # wg0 隧道路由 \\
-  ip route replace ${US_WG_TUN_IP%%/*}/32 dev wg0; \\
-  # 主动出站全走 wg0 \\
-  ip route replace default dev wg0
+PostUp = grep -q '^100 eth0rt$' /etc/iproute2/rt_tables || echo '100 eth0rt' >> /etc/iproute2/rt_tables
+PostUp = ip route replace default via ${HK_GW} dev ${HK_WAN_IF} table eth0rt
+PostUp = ip rule del pref 100 from ${HK_PUB_IP}/32 lookup eth0rt 2>/dev/null || true
+PostUp = ip rule add pref 100 from ${HK_PUB_IP}/32 lookup eth0rt
+PostUp = ip route replace ${US_PUB_IP}/32 via ${HK_GW} dev ${HK_WAN_IF}
+$([ -n "${PANEL_IP}" ] && echo "PostUp = ip route replace ${PANEL_IP}/32 via ${HK_GW} dev ${HK_WAN_IF}" || true)
+PostUp = ip route replace ${US_WG_TUN_IP%%/*}/32 dev wg0
+PostUp = ip route replace default dev wg0
 
-PostDown = \\
-  ip rule del pref 100 from ${HK_PUB_IP}/32 lookup eth0rt 2>/dev/null || true; \\
-  ip route del ${US_PUB_IP}/32 2>/dev/null || true; \\
-  $([ -n "${PANEL_IP}" ] && echo "ip route del ${PANEL_IP}/32 2>/dev/null || true; \\" || true)
-  ip route del ${US_WG_TUN_IP%%/*}/32 dev wg0 2>/dev/null || true; \\
-  ip route replace default via ${HK_GW} dev ${HK_WAN_IF}
+PostDown = ip route replace default via ${HK_GW} dev ${HK_WAN_IF} onlink
+PostDown = ip route del ${US_WG_TUN_IP%%/*}/32 dev wg0 2>/dev/null || true
+$([ -n "${PANEL_IP}" ] && echo "PostDown = ip route del ${PANEL_IP}/32 via ${HK_GW} dev ${HK_WAN_IF} 2>/dev/null || true" || true)
+PostDown = ip route del ${US_PUB_IP}/32 via ${HK_GW} dev ${HK_WAN_IF} 2>/dev/null || true
+PostDown = ip rule del pref 100 from ${HK_PUB_IP}/32 lookup eth0rt 2>/dev/null || true
+PostDown = ip route flush table eth0rt 2>/dev/null || true
 
 [Peer]
 PublicKey = ${US_PUB_KEY}
