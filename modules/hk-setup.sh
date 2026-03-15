@@ -752,6 +752,13 @@ _step_setup_wireguard() {
   [[ -z "${PANEL_IP}" ]] && PANEL_IP="$(getent hosts "${PANEL_API_HOST#https://}" | awk '{print $1}' | head -1 || true)"
   [[ -z "${PANEL_IP}" ]] && { _hk_warn "无法解析面板 IP，跳过面板路由"; PANEL_IP=""; }
 
+  local WG_DNS_LINE=""
+  if command -v resolvconf >/dev/null 2>&1; then
+    WG_DNS_LINE="DNS = 8.8.8.8"
+  else
+    _hk_warn "未检测到 resolvconf，wg0.conf 将不写 DNS（使用系统 /etc/resolv.conf）"
+  fi
+
   mkdir -p /etc/wireguard
 
   # 生成 wg0.conf
@@ -759,7 +766,7 @@ _step_setup_wireguard() {
 [Interface]
 PrivateKey = ${HK_PRIV_KEY}
 Address = ${HK_WG_ADDR}
-DNS = 8.8.8.8
+${WG_DNS_LINE}
 Table = off
 
 PostUp = grep -q '^100 eth0rt$' /etc/iproute2/rt_tables || echo '100 eth0rt' >> /etc/iproute2/rt_tables
