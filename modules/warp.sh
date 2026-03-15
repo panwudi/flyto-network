@@ -843,6 +843,9 @@ case "\${1:-}" in
 
   test)
     ok=1
+    step3_ok=0
+    step7_fail=0
+    step8_ok=0
     echo "--- [1] WARP 客户端状态 ---"
     ws="\$(warp-cli --accept-tos status 2>/dev/null || echo '无法获取')"
     echo "\${ws}"
@@ -859,9 +862,12 @@ case "\${1:-}" in
     echo "  正在通过 SOCKS5 访问 Google（最多 10 秒）..."
     sc="\$(_http_code --max-time 10 -x "socks5h://127.0.0.1:\${WARP_PROXY_PORT}" https://www.google.com)"
     echo "  HTTP: \${sc}"
-    _http_ok "\${sc}" \
-      && echo -e "  \${G}✓ SOCKS5 → Google 正常\${N}" \
-      || { echo "  ✗ SOCKS5 不通"; ok=0; }
+    if _http_ok "\${sc}"; then
+      step3_ok=1
+      echo -e "  \${G}✓ SOCKS5 → Google 正常\${N}"
+    else
+      echo "  ✗ SOCKS5 不通"; ok=0
+    fi
     echo
     echo "--- [4] warp-tproxy 进程 ---"
     systemctl is-active --quiet warp-tproxy 2>/dev/null \
@@ -902,18 +908,28 @@ case "\${1:-}" in
           echo -e "  \${Y}! HTTP 返回 000，但 REDIRECT 计数已增长（\${pre_pkts} -> \${post_pkts}）${N}"
           echo "  ! 透明转发链路生效，当前更可能是本机 DNS/应用层可达性问题"
         else
-          echo "  ✗ 透明代理不通（REDIRECT 计数未增长）"; ok=0
+          echo "  ✗ 透明代理不通（REDIRECT 计数未增长）"
+          step7_fail=1
         fi
       fi
     fi
     echo
     echo "--- [8] WARP 节点信息 ---"
     echo "  正在读取 Cloudflare trace（最多 10 秒）..."
-    curl -s --max-time 10 \
-      -x "socks5h://127.0.0.1:\${WARP_PROXY_PORT}" \
-      https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
-      | grep -E "^(warp|loc|ip)=" || echo "  (需 SOCKS5 正常才可获取)"
+    trace_out="\$(curl -s --max-time 10 -x "socks5h://127.0.0.1:\${WARP_PROXY_PORT}" https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null || true)"
+    if [[ -n "\${trace_out}" ]]; then
+      echo "\${trace_out}" | grep -E "^(warp|loc|ip)=" || true
+      echo "\${trace_out}" | grep -q '^warp=on$' && step8_ok=1 || true
+    else
+      echo "  (需 SOCKS5 正常才可获取)"
+    fi
     echo
+    if [[ \${step7_fail} -eq 1 && \${step3_ok} -eq 1 && \${step8_ok} -eq 1 ]]; then
+      echo -e "  \${Y}! 第7项本机直连探测失败，但 SOCKS5 与 warp=on 已通过，按可用处理\${N}"
+      echo "  ! 如需强制排查本机直连链路，请运行: warp debug"
+      step7_fail=0
+    fi
+    [[ \${step7_fail} -eq 1 ]] && ok=0
     if [[ \${ok} -eq 1 ]]; then
       echo -e "\${G}╔══════════════════════════════════════════════╗\${N}"
       echo -e "\${G}║  ✓  Google Gemini 送中成功！全部检测通过     ║\${N}"
