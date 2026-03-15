@@ -48,6 +48,68 @@ _warp_pause() {
   echo
 }
 
+_warp_step() {
+  echo
+  echo -e "  ${O}▶ $*${N}"
+  echo
+}
+
+_warp_progress_bar() {
+  local current="$1"
+  local total="$2"
+  local label="${3:-}"
+  local width=28
+  local percent=0
+  local filled=0
+  local bar=""
+  if [[ "${total}" -gt 0 ]]; then
+    percent=$(( current * 100 / total ))
+  fi
+  filled=$(( percent * width / 100 ))
+  bar="$(printf '%*s' "${filled}" '' | tr ' ' '#')"
+  bar="${bar}$(printf '%*s' "$((width - filled))" '' | tr ' ' '-')"
+  printf "\r  [%s] %3d%%  %s" "${bar}" "${percent}" "${label}"
+  if [[ "${current}" -ge "${total}" ]]; then
+    echo
+  fi
+}
+
+_warp_run_with_spinner() {
+  local desc="$1"
+  shift
+  local rc=0
+  local tmp_log=""
+  tmp_log="$(mktemp)"
+
+  if [[ -t 1 ]]; then
+    "$@" >"${tmp_log}" 2>&1 &
+    local pid=$!
+    local spin='|/-\'
+    local i=0
+    while kill -0 "${pid}" 2>/dev/null; do
+      i=$(( (i + 1) % 4 ))
+      printf "\r  %s %c" "${desc}" "${spin:${i}:1}"
+      sleep 0.15
+    done
+    wait "${pid}" || rc=$?
+    if [[ ${rc} -eq 0 ]]; then
+      printf "\r  %s ✓\n" "${desc}"
+    else
+      printf "\r  %s ✗\n" "${desc}"
+    fi
+  else
+    _info "${desc}"
+    "$@" >"${tmp_log}" 2>&1 || rc=$?
+  fi
+
+  if [[ ${rc} -ne 0 ]]; then
+    _warn "${desc}失败（exit=${rc}），最近日志如下："
+    sed -n '1,40p' "${tmp_log}" >&2
+  fi
+  rm -f "${tmp_log}"
+  return "${rc}"
+}
+
 # ── 运行时配置文件（端口唯一来源）──────────────────────────
 WARP_ENV_FILE="/etc/warp-google/env"
 WARP_PROXY_PORT="${WARP_PROXY_PORT:-40000}"
@@ -185,15 +247,36 @@ _install_deps() {
   case "${WARP_OS}" in
     ubuntu|debian)
       export DEBIAN_FRONTEND=noninteractive
-      apt-get update -y >/dev/null 2>&1 || true
-      for p in curl ca-certificates gnupg lsb-release iptables ipset python3 dnsutils; do
-        apt-get install -y "${p}" >/dev/null 2>&1 || _warn "跳过: ${p}"
+      _info "刷新软件源索引（apt-get update）..."
+      _warp_run_with_spinner "刷新软件源索引" apt-get update -y || true
+
+      local pkgs=(curl ca-certificates gnupg lsb-release iptables ipset python3 dnsutils)
+      local total="${#pkgs[@]}"
+      local idx=0
+      _warp_progress_bar 0 "${total}" "依赖安装准备中"
+      for p in "${pkgs[@]}"; do
+        idx=$((idx + 1))
+        _info "安装依赖 (${idx}/${total}): ${p}"
+        _warp_run_with_spinner "安装 ${p}" apt-get install -y "${p}" || _warn "跳过: ${p}"
+        _warp_progress_bar "${idx}" "${total}" "依赖安装进度"
       done ;;
     centos|rhel|rocky|almalinux|fedora)
       local pm="yum"; command -v dnf >/dev/null 2>&1 && pm="dnf"
-      "${pm}" install -y epel-release >/dev/null 2>&1 || true
-      for p in curl ca-certificates iptables ipset python3 bind-utils; do
-        "${pm}" install -y "${p}" >/dev/null 2>&1 || _warn "跳过: ${p}"
+      local pkgs=(curl ca-certificates iptables ipset python3 bind-utils)
+      local total=$(( ${#pkgs[@]} + 1 ))
+      local idx=0
+      _warp_progress_bar 0 "${total}" "依赖安装准备中"
+
+      idx=$((idx + 1))
+      _info "安装依赖 (${idx}/${total}): epel-release"
+      _warp_run_with_spinner "安装 epel-release" "${pm}" install -y epel-release || true
+      _warp_progress_bar "${idx}" "${total}" "依赖安装进度"
+
+      for p in "${pkgs[@]}"; do
+        idx=$((idx + 1))
+        _info "安装依赖 (${idx}/${total}): ${p}"
+        _warp_run_with_spinner "安装 ${p}" "${pm}" install -y "${p}" || _warn "跳过: ${p}"
+        _warp_progress_bar "${idx}" "${total}" "依赖安装进度"
       done ;;
     *) _err "不支持的系统: ${WARP_OS}"; return 1 ;;
   esac
@@ -213,15 +296,24 @@ _install_warp_client() {
       export DEBIAN_FRONTEND=noninteractive
       local arch; arch="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
       install -m 0755 -d /usr/share/keyrings
-      curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
-        | gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+      local key_tmp; key_tmp="$(mktemp)"
+      _warp_run_with_spinner "下载 Cloudflare GPG 密钥" \
+        curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg -o "${key_tmp}" \
+        || { rm -f "${key_tmp}"; _err "下载 Cloudflare GPG 密钥失败"; return 1; }
+      _warp_run_with_spinner "写入 Cloudflare keyring" \
+        gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg "${key_tmp}" \
+        || { rm -f "${key_tmp}"; _err "写入 Cloudflare keyring 失败"; return 1; }
+      rm -f "${key_tmp}"
       echo "deb [arch=${arch} signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] \
 https://pkg.cloudflareclient.com/ ${WARP_CODENAME} main" \
         > /etc/apt/sources.list.d/cloudflare-client.list
-      apt-get update -y >/dev/null 2>&1
-      apt-get install -y cloudflare-warp >/dev/null 2>&1 || { _err "WARP 安装失败"; return 1; } ;;
+      _warp_run_with_spinner "刷新 WARP 软件源索引" apt-get update -y \
+        || _warn "WARP 软件源刷新失败，继续尝试安装"
+      _warp_run_with_spinner "安装 cloudflare-warp" apt-get install -y cloudflare-warp \
+        || { _err "WARP 安装失败"; return 1; } ;;
     centos|rhel|rocky|almalinux|fedora)
-      rpm --import https://pkg.cloudflareclient.com/pubkey.gpg 2>/dev/null || true
+      _warp_run_with_spinner "导入 Cloudflare GPG 密钥" \
+        rpm --import https://pkg.cloudflareclient.com/pubkey.gpg || true
       cat > /etc/yum.repos.d/cloudflare-warp.repo <<'REPO'
 [cloudflare-warp]
 name=Cloudflare WARP
@@ -231,10 +323,11 @@ gpgcheck=1
 gpgkey=https://pkg.cloudflareclient.com/pubkey.gpg
 REPO
       local pm="yum"; command -v dnf >/dev/null 2>&1 && pm="dnf"
-      "${pm}" install -y cloudflare-warp || { _err "WARP 安装失败"; return 1; } ;;
+      _warp_run_with_spinner "安装 cloudflare-warp" "${pm}" install -y cloudflare-warp \
+        || { _err "WARP 安装失败"; return 1; } ;;
     *) _err "不支持的系统: ${WARP_OS}"; return 1 ;;
   esac
-  systemctl enable --now warp-svc >/dev/null 2>&1 || true
+  _warp_run_with_spinner "启动 warp-svc" systemctl enable --now warp-svc || true
   _ok "WARP 客户端已安装"
 }
 
@@ -268,30 +361,37 @@ _configure_warp() {
   warp-cli --accept-tos registration show >/dev/null 2>&1 && reg_ok=1 || true
   if [[ ${reg_ok} -eq 0 ]]; then
     _info "创建新 WARP 注册..."
-    warp-cli --accept-tos registration new >/dev/null 2>&1 \
-      || warp-cli --accept-tos register >/dev/null 2>&1 || true
+    _warp_run_with_spinner "创建 WARP 注册" warp-cli --accept-tos registration new \
+      || _warp_run_with_spinner "创建 WARP 注册(兼容)" warp-cli --accept-tos register || true
   else
     _info "复用现有 WARP 注册"
   fi
 
-  warp-cli --accept-tos mode proxy >/dev/null 2>&1 || true
+  _warp_run_with_spinner "切换 WARP 为 proxy 模式" warp-cli --accept-tos mode proxy || true
   _find_free_proxy_port
 
   # 连接 + 端口冲突三段重试
   local attempt=0 connected=0 status=""
   while [[ ${attempt} -lt 3 && ${connected} -eq 0 ]]; do
-    warp-cli --accept-tos proxy port "${WARP_PROXY_PORT}" >/dev/null 2>&1 || true
-    warp-cli --accept-tos connect >/dev/null 2>&1 || true
+    _info "连接尝试 $((attempt + 1))/3 (端口 ${WARP_PROXY_PORT})..."
+    _warp_run_with_spinner "设置 WARP 端口 ${WARP_PROXY_PORT}" \
+      warp-cli --accept-tos proxy port "${WARP_PROXY_PORT}" || true
+    _warp_run_with_spinner "发起 WARP 连接" warp-cli --accept-tos connect || true
+
+    local waited=0
     for _ in $(seq 1 20); do
       status="$(warp-cli --accept-tos status 2>/dev/null || echo '')"
       echo "${status}" | grep -qi 'Connected' && { connected=1; break; }
-      sleep 1; printf "."
+      waited=$((waited + 1))
+      printf "\r  等待连接状态: %2ds/20s" "${waited}"
+      sleep 1
     done
-    echo
+    printf "\r  等待连接状态: %2ds/20s\n" "${waited}"
     [[ ${connected} -eq 1 ]] && break
     if [[ ${attempt} -eq 0 ]]; then
       _info "重启 warp-svc 以释放端口..."
-      systemctl restart warp-svc >/dev/null 2>&1 || true; sleep 3
+      _warp_run_with_spinner "重启 warp-svc" systemctl restart warp-svc || true
+      sleep 3
     else
       WARP_PROXY_PORT=$((WARP_PROXY_PORT + 1))
       _warn "切换至端口 ${WARP_PROXY_PORT}..."
@@ -559,10 +659,15 @@ case "${1:-}" in
     echo "[warp-google] 更新 Google IP 段..."
     mkdir -p /etc/warp-google
     local_tmp="$(mktemp)"; ok=0
-    curl -fsSL -x "socks5h://127.0.0.1:${WARP_PROXY_PORT}" --max-time 30 \
-      "${GOOG_JSON}" -o "${local_tmp}" 2>/dev/null && ok=1
-    [[ ${ok} -eq 0 ]] && curl -fsSL --max-time 30 "${GOOG_JSON}" -o "${local_tmp}" 2>/dev/null && ok=1
+    echo "[warp-google] 下载 gstatic IP 列表（优先走 WARP SOCKS5）..."
+    curl -fL --progress-bar -x "socks5h://127.0.0.1:${WARP_PROXY_PORT}" --max-time 30 \
+      "${GOOG_JSON}" -o "${local_tmp}" && ok=1
+    if [[ ${ok} -eq 0 ]]; then
+      echo "[warp-google] WARP 下载失败，回退直连下载..."
+      curl -fL --progress-bar --max-time 30 "${GOOG_JSON}" -o "${local_tmp}" && ok=1
+    fi
     if [[ ${ok} -eq 1 ]]; then
+      echo "[warp-google] 解析 JSON 并生成 IPv4 网段列表..."
       python3 -c "
 import json,sys
 d=json.load(open('${local_tmp}'))
@@ -607,12 +712,21 @@ _sync_ai_route() {
   fi
 }
 
+_safe_ipset_count() {
+  local c
+  c="\$(ipset list warp_google4 2>/dev/null | grep -c '/' 2>/dev/null || true)"
+  [[ -z "\${c}" ]] && c=0
+  [[ "\${c}" =~ ^[0-9]+$ ]] || c=0
+  echo "\${c}"
+}
+
 case "\${1:-}" in
   status)
     echo
     _gok=0
-    curl -s --max-time 6 -o /dev/null -w "%{http_code}" https://www.google.com 2>/dev/null \
-      | grep -q "200" && _gok=1
+    echo "  正在检测 Google 连通性（最多 6 秒）..."
+    _gcode="\$(curl -s --max-time 6 -o /dev/null -w "%{http_code}" https://www.google.com 2>/dev/null || echo 000)"
+    [[ "\${_gcode}" == "200" ]] && _gok=1
     if [[ \$_gok -eq 1 ]]; then
       echo -e "\${G}╔══════════════════════════════════════╗\${N}"
       echo -e "\${G}║  ✓  Google / Gemini 已连通           ║\${N}"
@@ -631,7 +745,7 @@ case "\${1:-}" in
     systemctl is-active --quiet warp-tproxy 2>/dev/null \
       && echo -e "  tproxy   \${G}● 运行中\${N}  :\${TPROXY_PORT}" \
       || echo -e "  tproxy   \${R}● 未运行\${N}"
-    _cnt="\$(ipset list warp_google4 2>/dev/null | grep -c '/' || echo 0)"
+    _cnt="\$(_safe_ipset_count)"
     [[ "\$_cnt" -gt 0 ]] \
       && echo -e "  ipset    \${G}● \${_cnt} 条 Google IP 段\${N}" \
       || echo -e "  ipset    \${R}● 空\${N}"
@@ -662,6 +776,7 @@ case "\${1:-}" in
       || { echo "  ✗ 未监听"; ok=0; }
     echo
     echo "--- [3] SOCKS5 直连测试 ---"
+    echo "  正在通过 SOCKS5 访问 Google（最多 10 秒）..."
     sc="\$(curl -s --max-time 10 -x "socks5h://127.0.0.1:\${WARP_PROXY_PORT}" \
       -o /dev/null -w '%{http_code}' https://www.google.com 2>/dev/null || echo '000')"
     echo "  HTTP: \${sc}"
@@ -680,12 +795,13 @@ case "\${1:-}" in
       || { echo "  ✗ 规则缺失"; ok=0; }
     echo
     echo "--- [6] ipset 条目数 ---"
-    cnt="\$(ipset list warp_google4 2>/dev/null | grep -c '/' || echo 0)"
+    cnt="\$(_safe_ipset_count)"
     [[ "\${cnt}" -gt 0 ]] \
       && echo -e "  \${G}✓ \${cnt} 条 Google IP 段\${N}" \
       || { echo "  ✗ ipset 为空"; ok=0; }
     echo
     echo "--- [7] 透明代理端到端 ---"
+    echo "  正在执行端到端连通性测试（最多 30 秒）..."
     e2e="\$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' https://www.google.com 2>/dev/null || echo '000')"
     gem="\$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' https://gemini.google.com 2>/dev/null || echo '000')"
     echo "  Google   HTTP \${e2e}"
@@ -695,6 +811,7 @@ case "\${1:-}" in
       || { echo "  ✗ 透明代理不通"; ok=0; }
     echo
     echo "--- [8] WARP 节点信息 ---"
+    echo "  正在读取 Cloudflare trace（最多 10 秒）..."
     curl -s --max-time 10 \
       -x "socks5h://127.0.0.1:\${WARP_PROXY_PORT}" \
       https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
@@ -857,11 +974,16 @@ warp_do_install() {
   _info "开始安装 WARP v${WARP_VERSION}..."
   [[ ${EUID:-0} -ne 0 ]] && { _err "请以 root 运行"; return 1; }
 
+  _warp_step "步骤 1/6: 系统检查与 DNS 配置"
   _detect_os
   _info "系统: ${WARP_OS} ${WARP_OS_VER} (${WARP_CODENAME:-unknown})"
   _ensure_modules
   _setup_dns
+
+  _warp_step "步骤 2/6: 安装依赖"
   _install_deps
+
+  _warp_step "步骤 3/6: 安装 WARP 客户端"
   _install_warp_client
 
   # IPv4 优先
@@ -870,14 +992,18 @@ warp_do_install() {
     _ok "IPv4 优先已配置"
   fi
 
+  _warp_step "步骤 4/6: 部署透明代理与管理命令"
   _install_tproxy_backend
   _write_warp_google
   _write_warp_cmd
   _write_keepalive
   _write_systemd_service
+
+  _warp_step "步骤 5/6: 配置并连接 WARP"
   _configure_warp
 
-  systemctl restart warp-tproxy >/dev/null 2>&1 || true
+  _warp_step "步骤 6/6: 同步规则并执行验证"
+  _warp_run_with_spinner "重启 warp-tproxy" systemctl restart warp-tproxy || true
   /usr/local/bin/warp-google update || _warn "IP 段更新失败，使用静态列表"
   /usr/local/bin/warp-google start  || true
   _sync_v2bx_ai_route
@@ -886,8 +1012,7 @@ warp_do_install() {
   _ok "WARP 安装完成 — www.flytoex.com"
   echo -e "  管理: ${G}warp {status|start|stop|test|debug|ip|update|uninstall}${N}"
   echo
-  _info "安装后逐层诊断..."
-  sleep 2
+  _info "安装后逐层诊断（预计 10-30 秒）..."
   if ! warp test; then
     _warn "warp test 存在未通过项，请根据上方提示继续排查"
   fi
