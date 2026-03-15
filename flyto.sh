@@ -241,8 +241,7 @@ menu_warp() {
     echo -e "  ${G}3.${N} 8 层逐层诊断 (warp test)"
     echo -e "  ${G}4.${N} 重启 WARP"
     echo -e "  ${G}5.${N} 卸载 WARP"
-    echo -e "  ${G}0.${N} 返回主菜单"
-    echo -e "  ${G}q.${N} 退出脚本"
+    echo -e "  ${G}0/q.${N} 返回主菜单 / 退出脚本"
     echo
     prompt_menu_choice choice "  请输入选项 [0-5/q]: "
     case "${choice}" in
@@ -316,8 +315,7 @@ show_main_menu() {
     echo -e "  ${G}3.${N} WARP 管理         ${D}(安装/状态/诊断/重启/卸载)${N}"
     echo -e "  ${G}4.${N} 完整全新部署      ${D}(WireGuard + V2bX + 可选 WARP)${N}"
     echo -e "  ${G}5.${N} 清除解密信息      ${D}(下次重新输入解密密钥)${N}"
-    echo -e "  ${G}0.${N} 退出"
-    echo -e "  ${G}q.${N} 退出"
+    echo -e "  ${G}0/q.${N} 退出"
     echo
     prompt_menu_choice choice "  请输入选项 [0-5/q]: "
     echo

@@ -1125,8 +1125,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         echo -e "  ${G}1.${N} 安装 / 升级 WARP"
         echo -e "  ${G}2.${N} 查看状态"
         echo -e "  ${G}3.${N} 逐层诊断"
-        echo -e "  ${G}0.${N} 退出"
-        echo -e "  ${G}q.${N} 退出"
+        echo -e "  ${G}0/q.${N} 退出"
         echo
         _warp_read_menu_choice c "  请选择 [0-3/q]: " || exit 1
         case "${c}" in
