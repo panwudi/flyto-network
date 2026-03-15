@@ -112,7 +112,8 @@ _warp_run_with_spinner() {
 
 # ── 运行时配置文件（端口唯一来源）──────────────────────────
 WARP_ENV_FILE="/etc/warp-google/env"
-WARP_PROXY_PORT="${WARP_PROXY_PORT:-40000}"
+WARP_PROXY_PORT_DEFAULT="${WARP_PROXY_PORT_DEFAULT:-40000}"
+WARP_PROXY_PORT="${WARP_PROXY_PORT:-${WARP_PROXY_PORT_DEFAULT}}"
 TPROXY_PORT="${TPROXY_PORT:-12345}"
 [[ -f "${WARP_ENV_FILE}" ]] && source "${WARP_ENV_FILE}" 2>/dev/null || true
 
@@ -348,6 +349,20 @@ _port_listener_info() {
   ss -H -tlnp "sport = :${1}" 2>/dev/null | head -n1 || true
 }
 
+_prefer_default_proxy_port() {
+  # Unless explicitly overridden, prefer returning to the default port on fresh installs.
+  if [[ -n "${WARP_PROXY_PORT_FORCE:-}" ]]; then
+    _info "检测到 WARP_PROXY_PORT_FORCE=${WARP_PROXY_PORT_FORCE}，保留指定端口"
+    WARP_PROXY_PORT="${WARP_PROXY_PORT_FORCE}"
+    return 0
+  fi
+  if [[ "${WARP_PROXY_PORT}" != "${WARP_PROXY_PORT_DEFAULT}" ]] \
+      && ! _port_held_externally "${WARP_PROXY_PORT_DEFAULT}"; then
+    _info "默认端口 ${WARP_PROXY_PORT_DEFAULT} 可用，回归默认端口（当前历史端口 ${WARP_PROXY_PORT}）"
+    WARP_PROXY_PORT="${WARP_PROXY_PORT_DEFAULT}"
+  fi
+}
+
 _find_free_proxy_port() {
   local port="${WARP_PROXY_PORT}" limit=$((WARP_PROXY_PORT + 20))
   while [[ ${port} -lt ${limit} ]]; do
@@ -380,6 +395,7 @@ _configure_warp() {
   fi
 
   _warp_run_with_spinner "切换 WARP 为 proxy 模式" warp-cli --accept-tos mode proxy || true
+  _prefer_default_proxy_port
   _find_free_proxy_port
 
   # 连接 + 端口冲突三段重试
@@ -411,8 +427,21 @@ _configure_warp() {
     attempt=$((attempt + 1))
   done
 
-  [[ ${connected} -eq 1 ]] && _ok "WARP 已连接，端口 ${WARP_PROXY_PORT}" \
-    || _warn "WARP 连接失败，运行 'warp test' 诊断"
+  if [[ ${connected} -eq 0 ]]; then
+    local warp_trace=""
+    warp_trace="$(curl -s --max-time 8 -x "socks5h://127.0.0.1:${WARP_PROXY_PORT}" \
+      https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^warp=' | head -1 || true)"
+    if [[ "${warp_trace}" == "warp=on" ]]; then
+      connected=2
+      _warn "warp-cli 状态不可用，但 SOCKS5 trace 显示 warp=on（按已连通处理）"
+    fi
+  fi
+
+  if [[ ${connected} -ge 1 ]]; then
+    _ok "WARP 已连接，端口 ${WARP_PROXY_PORT}"
+  else
+    _warn "WARP 连接失败，运行 'warp test' 诊断"
+  fi
 
   # 写入 ENV_FILE
   mkdir -p "${WARP_CACHE_DIR}"
@@ -423,6 +452,7 @@ TPROXY_PORT=${TPROXY_PORT}
 EOF
   _ok "端口配置已写入 ${WARP_ENV_FILE}"
   _sync_v2bx_ai_route
+  [[ ${connected} -ge 1 ]]
 }
 
 _sync_v2bx_ai_route() {
@@ -732,13 +762,24 @@ _safe_ipset_count() {
   echo "\${c}"
 }
 
+_http_code() {
+  local code
+  code="\$(curl -s "\$@" -o /dev/null -w '%{http_code}' 2>/dev/null || true)"
+  [[ "\${code}" =~ ^[0-9]{3}$ ]] || code="000"
+  echo "\${code}"
+}
+
+_http_ok() {
+  [[ "\$1" =~ ^2[0-9][0-9]$ || "\$1" =~ ^3[0-9][0-9]$ ]]
+}
+
 case "\${1:-}" in
   status)
     echo
     _gok=0
     echo "  正在检测 Google 连通性（最多 6 秒）..."
-    _gcode="\$(curl -s --max-time 6 -o /dev/null -w '%{http_code}' https://www.google.com 2>/dev/null || echo 000)"
-    [[ "\${_gcode}" == "200" ]] && _gok=1
+    _gcode="\$(_http_code -4 --max-time 6 https://www.google.com)"
+    _http_ok "\${_gcode}" && _gok=1
     if [[ \$_gok -eq 1 ]]; then
       echo -e "\${G}╔══════════════════════════════════════╗\${N}"
       echo -e "\${G}║  ✓  Google / Gemini 已连通           ║\${N}"
@@ -750,7 +791,7 @@ case "\${1:-}" in
       echo -e "  \${Y}运行 'warp test' 查看逐层诊断\${N}"
     fi
     echo
-    _ws="\$(warp-cli status 2>/dev/null || echo '未运行')"
+    _ws="\$(warp-cli --accept-tos status 2>/dev/null || echo '未运行')"
     echo "\${_ws}" | grep -qi 'Connected' \
       && echo -e "  WARP     \${G}● 已连接\${N}  端口 \${WARP_PROXY_PORT}" \
       || echo -e "  WARP     \${R}● 未连接\${N}"
@@ -776,7 +817,7 @@ case "\${1:-}" in
   test)
     ok=1
     echo "--- [1] WARP 客户端状态 ---"
-    ws="\$(warp-cli status 2>/dev/null || echo '无法获取')"
+    ws="\$(warp-cli --accept-tos status 2>/dev/null || echo '无法获取')"
     echo "\${ws}"
     echo "\${ws}" | grep -qi 'Connected' \
       && echo -e "  \${G}✓ WARP 已连接\${N}" \
@@ -789,10 +830,9 @@ case "\${1:-}" in
     echo
     echo "--- [3] SOCKS5 直连测试 ---"
     echo "  正在通过 SOCKS5 访问 Google（最多 10 秒）..."
-    sc="\$(curl -s --max-time 10 -x "socks5h://127.0.0.1:\${WARP_PROXY_PORT}" \
-      -o /dev/null -w '%{http_code}' https://www.google.com 2>/dev/null || echo '000')"
+    sc="\$(_http_code --max-time 10 -x "socks5h://127.0.0.1:\${WARP_PROXY_PORT}" https://www.google.com)"
     echo "  HTTP: \${sc}"
-    [[ "\${sc}" == "200" ]] \
+    _http_ok "\${sc}" \
       && echo -e "  \${G}✓ SOCKS5 → Google 正常\${N}" \
       || { echo "  ✗ SOCKS5 不通"; ok=0; }
     echo
@@ -814,13 +854,15 @@ case "\${1:-}" in
     echo
     echo "--- [7] 透明代理端到端 ---"
     echo "  正在执行端到端连通性测试（最多 30 秒）..."
-    e2e="\$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' https://www.google.com 2>/dev/null || echo '000')"
-    gem="\$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' https://gemini.google.com 2>/dev/null || echo '000')"
+    e2e="\$(_http_code -4 --max-time 15 https://www.google.com)"
+    gem="\$(_http_code -4 --max-time 15 https://gemini.google.com)"
     echo "  Google   HTTP \${e2e}"
     echo "  Gemini   HTTP \${gem}"
-    [[ "\${e2e}" == "200" ]] \
-      && echo -e "  \${G}✓ 透明代理正常\${N}" \
-      || { echo "  ✗ 透明代理不通"; ok=0; }
+    if _http_ok "\${e2e}" || _http_ok "\${gem}"; then
+      echo -e "  \${G}✓ 透明代理正常\${N}"
+    else
+      echo "  ✗ 透明代理不通"; ok=0
+    fi
     echo
     echo "--- [8] WARP 节点信息 ---"
     echo "  正在读取 Cloudflare trace（最多 10 秒）..."
@@ -840,7 +882,7 @@ case "\${1:-}" in
     fi ;;
 
   debug)
-    echo "=== warp-cli status ==="; warp-cli status 2>&1 || true
+    echo "=== warp-cli status ==="; warp-cli --accept-tos status 2>&1 || true
     echo; echo "=== warp-tproxy ==="; systemctl status warp-tproxy --no-pager -l 2>&1 | head -25 || true
     echo; echo "=== 端口监听 ==="
     ss -tlnp 2>/dev/null | grep -E ":\${WARP_PROXY_PORT}|:\${TPROXY_PORT}" || echo "无相关端口"
@@ -1017,7 +1059,8 @@ warp_do_install() {
   _write_systemd_service
 
   _warp_step "步骤 5/6: 配置并连接 WARP"
-  _configure_warp
+  local configure_ok=1
+  _configure_warp || configure_ok=0
 
   _warp_step "步骤 6/6: 同步规则并执行验证"
   _warp_run_with_spinner "重启 warp-tproxy" systemctl restart warp-tproxy || true
@@ -1026,7 +1069,11 @@ warp_do_install() {
   _sync_v2bx_ai_route
 
   echo
-  _ok "WARP 安装完成 — www.flytoex.com"
+  if [[ ${configure_ok} -eq 1 ]]; then
+    _ok "WARP 安装完成 — www.flytoex.com"
+  else
+    _warn "WARP 安装流程完成，但 warp-cli 状态异常（SOCKS5 可能仍可用）"
+  fi
   echo -e "  管理: ${G}warp {status|start|stop|test|debug|ip|update|uninstall}${N}"
   echo
   _info "安装后逐层诊断（预计 10-30 秒）..."
