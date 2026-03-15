@@ -777,8 +777,8 @@ case "\${1:-}" in
   status)
     echo
     _gok=0
-    echo "  正在检测 Google 连通性（最多 6 秒）..."
-    _gcode="\$(_http_code -4 --max-time 6 https://www.google.com)"
+    echo "  正在检测 Google 连通性（WARP SOCKS5，最多 8 秒）..."
+    _gcode="\$(_http_code --max-time 8 -x "socks5h://127.0.0.1:\${WARP_PROXY_PORT}" https://www.google.com)"
     _http_ok "\${_gcode}" && _gok=1
     if [[ \$_gok -eq 1 ]]; then
       echo -e "\${G}╔══════════════════════════════════════╗\${N}"
@@ -854,14 +854,21 @@ case "\${1:-}" in
     echo
     echo "--- [7] 透明代理端到端 ---"
     echo "  正在执行端到端连通性测试（最多 30 秒）..."
-    e2e="\$(_http_code -4 --max-time 15 https://www.google.com)"
-    gem="\$(_http_code -4 --max-time 15 https://gemini.google.com)"
-    echo "  Google   HTTP \${e2e}"
-    echo "  Gemini   HTTP \${gem}"
-    if _http_ok "\${e2e}" || _http_ok "\${gem}"; then
-      echo -e "  \${G}✓ 透明代理正常\${N}"
+    g4="\$(getent ahostsv4 www.google.com 2>/dev/null | awk 'NR==1{print \$1}' || true)"
+    m4="\$(getent ahostsv4 gemini.google.com 2>/dev/null | awk 'NR==1{print \$1}' || true)"
+    if [[ -z "\${g4}" && -z "\${m4}" ]]; then
+      echo "  ! 本机 DNS 未解析到 Google/Gemini IPv4，跳过本项（不计失败）"
+      echo "  ! 可手动检查: getent ahostsv4 www.google.com"
     else
-      echo "  ✗ 透明代理不通"; ok=0
+      e2e="\$(_http_code -4 --max-time 15 https://www.google.com)"
+      gem="\$(_http_code -4 --max-time 15 https://gemini.google.com)"
+      echo "  Google   HTTP \${e2e}"
+      echo "  Gemini   HTTP \${gem}"
+      if _http_ok "\${e2e}" || _http_ok "\${gem}"; then
+        echo -e "  \${G}✓ 透明代理正常\${N}"
+      else
+        echo "  ✗ 透明代理不通"; ok=0
+      fi
     fi
     echo
     echo "--- [8] WARP 节点信息 ---"
@@ -879,6 +886,7 @@ case "\${1:-}" in
     else
       echo -e "\${R}[✗] 存在异常，请根据上方提示排查\${N}"
       echo    "    详细日志: warp debug"
+      exit 1
     fi ;;
 
   debug)
