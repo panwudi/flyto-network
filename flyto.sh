@@ -56,6 +56,29 @@ prompt_read_secret() {
   fi
 }
 
+trim_text() {
+  local s="${1:-}"
+  s="${s//$'\r'/}"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "${s}"
+}
+
+drain_input_buffer() {
+  local __junk=""
+  while IFS= read -r -t 0 -u "${INPUT_FD}" __junk; do :; done
+}
+
+prompt_menu_choice() {
+  local __var_name="$1"
+  local __prompt="$2"
+  local __value=""
+  drain_input_buffer
+  prompt_read __value "${__prompt}"
+  __value="$(trim_text "${__value}")"
+  printf -v "${__var_name}" '%s' "${__value}"
+}
+
 pause_screen() {
   local __prompt="${1:-  按回车继续...}"
   local __dummy=""
@@ -208,6 +231,7 @@ load_module() {
 menu_warp() {
   FLYTO_INTERACTIVE=1
   while true; do
+    local choice=""
     echo
     echo -e "  ${W}WARP 管理（Google / Gemini / OpenAI / Claude 相关流量）${N}"
     echo -e "  ${D}────────────────────────────────────────────────────${N}"
@@ -218,8 +242,9 @@ menu_warp() {
     echo -e "  ${G}4.${N} 重启 WARP"
     echo -e "  ${G}5.${N} 卸载 WARP"
     echo -e "  ${G}0.${N} 返回主菜单"
+    echo -e "  ${G}q.${N} 退出脚本"
     echo
-    prompt_read choice "  请输入选项 [0-5]: "
+    prompt_menu_choice choice "  请输入选项 [0-5/q]: "
     case "${choice}" in
       1)
         load_module warp.sh
@@ -264,7 +289,11 @@ menu_warp() {
         fi
         pause_screen "  按回车返回 WARP 菜单..."
         ;;
-      0) return ;;
+      0) return 0 ;;
+      [Qq]|[Qq][Uu][Ii][Tt]|[Ee][Xx][Ii][Tt])
+        echo -e "  ${D}www.flytoex.com${N}"
+        exit 0
+        ;;
       *) error "无效选项"; sleep 1 ;;
     esac
   done
@@ -276,6 +305,7 @@ menu_warp() {
 show_main_menu() {
   FLYTO_INTERACTIVE=1
   while true; do
+    local choice=""
     show_banner
     echo -e "${C}  ╔══════════════════════════════════════════════════════╗${N}"
     echo -e "${C}  ║                    主菜单 Main Menu                 ║${N}"
@@ -287,8 +317,9 @@ show_main_menu() {
     echo -e "  ${G}4.${N} 完整全新部署      ${D}(WireGuard + V2bX + 可选 WARP)${N}"
     echo -e "  ${G}5.${N} 清除解密信息      ${D}(下次重新输入解密密钥)${N}"
     echo -e "  ${G}0.${N} 退出"
+    echo -e "  ${G}q.${N} 退出"
     echo
-    prompt_read choice "  请输入选项 [0-5]: "
+    prompt_menu_choice choice "  请输入选项 [0-5/q]: "
     echo
     case "${choice}" in
       1)
@@ -318,6 +349,10 @@ show_main_menu() {
         pause_screen "  按回车返回主菜单..."
         ;;
       0)
+        echo -e "  ${D}www.flytoex.com${N}"
+        exit 0
+        ;;
+      [Qq]|[Qq][Uu][Ii][Tt]|[Ee][Xx][Ii][Tt])
         echo -e "  ${D}www.flytoex.com${N}"
         exit 0
         ;;

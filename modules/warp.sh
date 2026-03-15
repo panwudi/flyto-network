@@ -48,6 +48,26 @@ _warp_pause() {
   echo
 }
 
+_warp_trim() {
+  local s="${1:-}"
+  s="${s//$'\r'/}"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "${s}"
+}
+
+_warp_read_menu_choice() {
+  local __var_name="$1"
+  local __prompt="$2"
+  local __value=""
+  if ! read -r -p "${__prompt}" __value </dev/tty; then
+    return 1
+  fi
+  __value="$(_warp_trim "${__value}")"
+  printf -v "${__var_name}" '%s' "${__value}"
+  return 0
+}
+
 _warp_step() {
   echo
   echo -e "  ${O}▶ $*${N}"
@@ -1106,8 +1126,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         echo -e "  ${G}2.${N} 查看状态"
         echo -e "  ${G}3.${N} 逐层诊断"
         echo -e "  ${G}0.${N} 退出"
+        echo -e "  ${G}q.${N} 退出"
         echo
-        read -r -p "  请选择 [0-3]: " c </dev/tty || exit 1
+        _warp_read_menu_choice c "  请选择 [0-3/q]: " || exit 1
         case "${c}" in
           1)
             warp_do_install
@@ -1121,7 +1142,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             command -v warp >/dev/null 2>&1 && warp test || echo "未安装"
             _warp_pause
             ;;
-          0) exit 0 ;;
+          0|[Qq]|[Qq][Uu][Ii][Tt]|[Ee][Xx][Ii][Tt]) exit 0 ;;
           *) _warn "无效选项，请输入 0 / 1 / 2 / 3"; sleep 1 ;;
         esac
       done
