@@ -615,7 +615,11 @@ _install_tproxy_backend() {
 
   local exec_start
   if [[ "${backend}" == "ipt2socks" ]]; then
-    exec_start='/usr/local/bin/ipt2socks -4 -b 127.0.0.1 -l ${TPROXY_PORT} -s 127.0.0.1 -p ${WARP_PROXY_PORT} -j 2'
+    # NOTE:
+    # Legacy warp-script used "-R" for REDIRECT mode. The integrated script
+    # accidentally dropped this flag, which can break transparent redirect in
+    # some environments. Keep behavior consistent with the legacy script.
+    exec_start='/usr/local/bin/ipt2socks -R -4 -b 127.0.0.1 -l ${TPROXY_PORT} -s 127.0.0.1 -p ${WARP_PROXY_PORT} -j 2'
   else
     exec_start='/usr/local/bin/flyto-tproxy-py'
   fi

@@ -139,6 +139,16 @@ else
   bad "Google/Gemini 分流不完整"
 fi
 
+echo
+info "补充探测：SOCKS5 域名解析模式差异（用于定位 502 / reset）"
+socks5h_code="$(http_code --max-time 12 -x "socks5h://127.0.0.1:${WARP_PROXY_PORT}" https://www.google.com)"
+socks5_code="$(http_code --max-time 12 -x "socks5://127.0.0.1:${WARP_PROXY_PORT}" https://www.google.com)"
+echo "  socks5h (远端解析) HTTP=${socks5h_code}"
+echo "  socks5  (本地解析) HTTP=${socks5_code}"
+if is_http_reachable "${socks5h_code}" && ! is_http_reachable "${socks5_code}"; then
+  warn "出现 socks5h 正常 / socks5 异常，透明分流可能受 CONNECT(IP) 限制影响"
+fi
+
 print_header "3) OpenAI / Claude 路由命中验证（sing-box）"
 if [[ ! -f /etc/V2bX/sing_origin.json ]]; then
   bad "缺少 /etc/V2bX/sing_origin.json"
