@@ -807,12 +807,21 @@ EOF
 
   # 启动 WireGuard
   systemctl enable wg-quick@wg0 >/dev/null 2>&1 || true
-  if systemctl is-active --quiet wg-quick@wg0 2>/dev/null; then
-    systemctl restart wg-quick@wg0
-  else
-    systemctl start wg-quick@wg0
+  systemctl stop wg-quick@wg0 2>/dev/null || true
+  wg-quick down wg0 2>/dev/null || true
+  sleep 1
+  if ! systemctl start wg-quick@wg0; then
+    _hk_err "wg-quick@wg0 启动失败，已中止"
+    journalctl -u wg-quick@wg0 -n 30 --no-pager 2>/dev/null || true
+    exit 1
   fi
   sleep 3
+  if ! systemctl is-active --quiet wg-quick@wg0 2>/dev/null; then
+    _hk_err "wg-quick@wg0 未处于 active 状态，已中止"
+    systemctl status wg-quick@wg0 --no-pager -l 2>/dev/null | sed -n '1,40p' || true
+    journalctl -u wg-quick@wg0 -n 40 --no-pager 2>/dev/null || true
+    exit 1
+  fi
 
   # 三项验证
   _hk_step "步骤 4b: WireGuard 三项验证"
@@ -828,13 +837,29 @@ EOF
   fi
 
   echo "--- [2] 出口 IP 地区 ---"
-  local exit_ip; exit_ip="$(curl -4 -s --max-time 10 https://ifconfig.io 2>/dev/null || echo '')"
+  local exit_ip=""
+  local exit_probe_mode="wg0"
+  exit_ip="$(curl -4 -s --max-time 10 --interface wg0 https://ifconfig.io 2>/dev/null || true)"
+  if [[ -z "${exit_ip}" ]]; then
+    exit_probe_mode="default-route"
+    exit_ip="$(curl -4 -s --max-time 10 https://ifconfig.io 2>/dev/null || true)"
+  fi
   local exit_country; exit_country="$(curl -s --max-time 8 "https://ipinfo.io/${exit_ip}/country" 2>/dev/null || echo '')"
+  local default_route; default_route="$(ip -4 route show default 2>/dev/null | head -1 || true)"
+  local default_dev; default_dev="$(ip -4 route show default 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++) if($i==\"dev\"){print $(i+1); exit}}' || true)"
   echo "  出口 IP: ${exit_ip}  地区: ${exit_country}"
+  echo "  探测方式: ${exit_probe_mode}"
+  echo "  默认路由: ${default_route:-<空>}"
+  if [[ "${default_dev}" != "wg0" ]]; then
+    echo -e "  ${Y}! 当前默认路由并非 wg0（dev=${default_dev:-<空>}）${N}"
+  fi
   if [[ "${exit_country}" == "US" ]]; then
     echo -e "  ${G}✓ 出口为美国${N}"
   else
     echo -e "  ${R}✗ 出口非美国 (${exit_country})${N}"; ok=0
+    if [[ -n "${HK_PUB_IP}" && "${exit_ip}" == "${HK_PUB_IP}" ]]; then
+      echo -e "  ${Y}! 当前出口与香港公网 IP 一致，说明 wg0 未生效（仍本地直出）${N}"
+    fi
   fi
 
   echo "--- [3] 回包路径 ---"
@@ -851,6 +876,17 @@ EOF
     echo "  1. 检查美国节点是否在线: ping ${US_PUB_IP}"
     echo "  2. 检查 WG Endpoint 路由: ip route get ${US_PUB_IP}"
     echo "  3. 查看 WG 日志: journalctl -u wg-quick@wg0 -n 30"
+    echo
+    echo "--- [附加诊断] wg show (root) ---"
+    wg show 2>/dev/null || true
+    if command -v ip >/dev/null 2>&1 && ip netns list 2>/dev/null | awk '{print $1}' | grep -qx "sb-ns"; then
+      echo "--- [附加诊断] wg show (sb-ns) ---"
+      ip netns exec sb-ns wg show 2>/dev/null || true
+    fi
+    echo "--- [附加诊断] 默认路由 ---"
+    ip -4 route show default 2>/dev/null || true
+    echo "--- [附加诊断] Endpoint 路由 ---"
+    ip -4 route get "${US_PUB_IP}" 2>/dev/null || true
     exit 1
   fi
   _hk_ok "WireGuard 三项验证通过"
