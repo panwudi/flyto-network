@@ -793,6 +793,13 @@ _http_ok() {
   [[ "\$1" =~ ^2[0-9][0-9]$ || "\$1" =~ ^3[0-9][0-9]$ ]]
 }
 
+_nat_redirect_pkts() {
+  local p
+  p="\$(iptables -t nat -L WARP_GOOGLE -n -v -x 2>/dev/null | awk '/REDIRECT/{print \$1; exit}' || true)"
+  [[ "\${p}" =~ ^[0-9]+$ ]] || p=0
+  echo "\${p}"
+}
+
 case "\${1:-}" in
   status)
     echo
@@ -887,7 +894,16 @@ case "\${1:-}" in
       if _http_ok "\${e2e}" || _http_ok "\${gem}"; then
         echo -e "  \${G}✓ 透明代理正常\${N}"
       else
-        echo "  ✗ 透明代理不通"; ok=0
+        pre_pkts="\$(_nat_redirect_pkts)"
+        probe_ip="\${g4:-\${m4:-172.217.0.1}}"
+        (exec 3<>"/dev/tcp/\${probe_ip}/443") >/dev/null 2>&1 || true
+        post_pkts="\$(_nat_redirect_pkts)"
+        if [[ "\${post_pkts}" -gt "\${pre_pkts}" ]]; then
+          echo -e "  \${Y}! HTTP 返回 000，但 REDIRECT 计数已增长（\${pre_pkts} -> \${post_pkts}）${N}"
+          echo "  ! 透明转发链路生效，当前更可能是本机 DNS/应用层可达性问题"
+        else
+          echo "  ✗ 透明代理不通（REDIRECT 计数未增长）"; ok=0
+        fi
       fi
     fi
     echo
