@@ -335,7 +335,17 @@ REPO
 # 端口冲突检测
 # ============================================================
 _port_held_externally() {
-  ss -tlnp 2>/dev/null | grep -q ":${1}[[:space:]]"
+  local line
+  line="$(ss -H -tlnp "sport = :${1}" 2>/dev/null | head -n1 || true)"
+  [[ -z "${line}" ]] && return 1
+  if echo "${line}" | grep -Eqi 'warp-svc|warp-cli|cloudflare-warp'; then
+    return 1
+  fi
+  return 0
+}
+
+_port_listener_info() {
+  ss -H -tlnp "sport = :${1}" 2>/dev/null | head -n1 || true
 }
 
 _find_free_proxy_port() {
@@ -344,7 +354,9 @@ _find_free_proxy_port() {
     if ! _port_held_externally "${port}"; then
       WARP_PROXY_PORT="${port}"; return 0
     fi
-    _warn "端口 ${port} 被占用，尝试 $((port+1))..."
+    _warn "端口 ${port} 被外部进程占用，尝试 $((port+1))..."
+    local holder; holder="$(_port_listener_info "${port}")"
+    [[ -n "${holder}" ]] && _warn "占用详情: ${holder}"
     port=$((port + 1))
   done
   WARP_PROXY_PORT="${port}"
@@ -646,7 +658,7 @@ _iptables_clean() {
 
 case "${1:-}" in
   start)
-    warp-cli connect 2>/dev/null || true
+    warp-cli --accept-tos connect >/dev/null 2>&1 || true
     systemctl restart warp-tproxy >/dev/null 2>&1 || true
     _ipset_apply; _iptables_apply
     echo "[warp-google] 已启动" ;;
@@ -757,8 +769,8 @@ case "\${1:-}" in
     echo -e "  \${C}www.flytoex.com\${N}"
     echo ;;
 
-  start)   warp-cli connect 2>/dev/null || true; /usr/local/bin/warp-google start; _sync_ai_route ;;
-  stop)    /usr/local/bin/warp-google stop; warp-cli disconnect 2>/dev/null || true ;;
+  start)   warp-cli --accept-tos connect >/dev/null 2>&1 || true; /usr/local/bin/warp-google start; _sync_ai_route ;;
+  stop)    /usr/local/bin/warp-google stop; warp-cli --accept-tos disconnect >/dev/null 2>&1 || true ;;
   restart) /usr/local/bin/warp-google restart; _sync_ai_route ;;
 
   test)
@@ -849,7 +861,7 @@ case "\${1:-}" in
     read -r -p "确定卸载 WARP？[y/N]: " c </dev/tty
     [[ "\${c}" =~ ^[Yy]\$ ]] || { echo "已取消"; exit 0; }
     /usr/local/bin/warp-google stop 2>/dev/null || true
-    warp-cli disconnect 2>/dev/null || true
+    warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
     for svc in warp-keepalive.timer warp-keepalive.service warp-tproxy.service warp-svc.service; do
       systemctl disable --now "\${svc}" 2>/dev/null || true
     done
@@ -912,8 +924,8 @@ exec 9>/run/warp-keepalive.lock; flock -n 9 || exit 0
 if ! curl -s --max-time 10 -x "socks5h://127.0.0.1:${WARP_PROXY_PORT}" \
     -o /dev/null https://www.google.com; then
   logger -t warp-keepalive "proxy down, reconnecting..."
-  warp-cli disconnect 2>/dev/null || true; sleep 2
-  warp-cli connect   2>/dev/null || true; sleep 3
+  warp-cli --accept-tos disconnect >/dev/null 2>&1 || true; sleep 2
+  warp-cli --accept-tos connect   >/dev/null 2>&1 || true; sleep 3
 fi
 if ! curl -s --max-time 10 -o /dev/null https://www.google.com; then
   logger -t warp-keepalive "tproxy down, restarting..."
@@ -1015,6 +1027,8 @@ warp_do_install() {
   _info "安装后逐层诊断（预计 10-30 秒）..."
   if ! warp test; then
     _warn "warp test 存在未通过项，请根据上方提示继续排查"
+    _info "自动输出 warp debug 摘要，便于定位问题..."
+    warp debug || true
   fi
 }
 

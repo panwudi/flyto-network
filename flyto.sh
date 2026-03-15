@@ -228,7 +228,10 @@ menu_warp() {
         ;;
       2)
         if command -v warp >/dev/null 2>&1; then
-          run_and_warn "WARP 状态查询" warp status
+          if ! run_action warp status; then
+            warn "WARP 状态查询失败，自动输出调试信息"
+            run_action warp debug || true
+          fi
         else
           warn "WARP 尚未安装"
         fi
@@ -236,7 +239,10 @@ menu_warp() {
         ;;
       3)
         if command -v warp >/dev/null 2>&1; then
-          run_and_warn "WARP 诊断" warp test
+          if ! run_action warp test; then
+            warn "WARP 诊断失败，自动输出调试信息"
+            run_action warp debug || true
+          fi
         else
           warn "WARP 尚未安装"
         fi
@@ -350,8 +356,26 @@ main() {
       load_module warp.sh
       case "${1:-}" in
         install)   warp_do_install ;;
-        status)    command -v warp >/dev/null 2>&1 && warp status || warn "WARP 未安装" ;;
-        test)      command -v warp >/dev/null 2>&1 && warp test  || warn "WARP 未安装" ;;
+        status)
+          if command -v warp >/dev/null 2>&1; then
+            if ! warp status; then
+              warn "WARP 状态查询失败，自动输出调试信息"
+              warp debug || true
+            fi
+          else
+            warn "WARP 未安装"
+          fi
+          ;;
+        test)
+          if command -v warp >/dev/null 2>&1; then
+            if ! warp test; then
+              warn "WARP 诊断失败，自动输出调试信息"
+              warp debug || true
+            fi
+          else
+            warn "WARP 未安装"
+          fi
+          ;;
         uninstall) command -v warp >/dev/null 2>&1 && warp uninstall || warn "WARP 未安装" ;;
         *)         load_secrets; menu_warp ;;
       esac
